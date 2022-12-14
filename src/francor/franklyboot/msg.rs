@@ -1,4 +1,3 @@
-
 // Node ID ----------------------------------------------------------------------------------------
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum NodeID {
@@ -10,22 +9,22 @@ pub enum NodeID {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum RequestType {
-    ReqPing, //< Ping device | Response is bootloader version
+    ReqPing,        //< Ping device | Response is bootloader version
     ReqResetDevice, //< Resets the device (hardware reset)
-    ReqStartApp, //< Start application and exit bootloader
+    ReqStartApp,    //< Start application and exit bootloader
 
     /* Device information */
     ReqDevInfoBootloaderVersion, //< Reads the bootloader version
-    ReqDevInfoBootloaderCRC, //< Calculates the CRC of the bootloader flash area
-    ReqDevInfoVID, //< Reads the vendor id
-    ReqDevInfoPID, //< Reads the product id
-    ReqDevInfoPRD, //< Reads the production date
-    ReqDevInfoUID, //< Reads the device unique ID
+    ReqDevInfoBootloaderCRC,     //< Calculates the CRC of the bootloader flash area
+    ReqDevInfoVID,               //< Reads the vendor id
+    ReqDevInfoPID,               //< Reads the product id
+    ReqDevInfoPRD,               //< Reads the production date
+    ReqDevInfoUID,               //< Reads the device unique ID
 
     /* Flash information */
     ReqFlashInfoStartAddr, //< Get the start address of the flash area
-    ReqFlashInfoPageSize, //< Get the size in bytes of a page
-    ReqFlashInfoNumPages, //< Get the number of pages (including bootloader area)
+    ReqFlashInfoPageSize,  //< Get the size in bytes of a page
+    ReqFlashInfoNumPages,  //< Get the number of pages (including bootloader area)
 
     /* App Information */
     ReqAppInfoPageIdx, //< Get the page idx of app area in flash
@@ -36,15 +35,15 @@ pub enum RequestType {
     ReqFlashReadWord, //< Reads a word from the flash
 
     /* Page Buffer Commands */
-    ReqPageBufferClear, //< Clears the page buffer (RAM)
-    ReqPageBufferReadWord, //< Reads a word to the page buffer (RAM)
-    ReqPageBufferWriteWord, //< Writes a word to the page buffer (RAM)
-    ReqPageBufferCalcCRC, //< Calculates the CRC over the page buffer
+    ReqPageBufferClear,        //< Clears the page buffer (RAM)
+    ReqPageBufferReadWord,     //< Reads a word to the page buffer (RAM)
+    ReqPageBufferWriteWord,    //< Writes a word to the page buffer (RAM)
+    ReqPageBufferCalcCRC,      //< Calculates the CRC over the page buffer
     ReqPageBufferWriteToFlash, //< Write the page buffer to the desired flash page
 
     /* Flash Write Commands*/
     ReqFlashWriteErasePage, //< Erases an flash page
-    ReqFlashWriteAppCRC, //< Writes the CRC of the app to the flash
+    ReqFlashWriteAppCRC,    //< Writes the CRC of the app to the flash
 }
 
 impl RequestType {
@@ -106,22 +105,21 @@ impl RequestType {
     }
 }
 
-
 // Response types ---------------------------------------------------------------------------------
 
 #[derive(Debug, PartialEq)]
-pub enum ResponseType {   
+pub enum ResponseType {
     RespNone, // Unused / ignored
-    RespAck, // Acknowledge
+    RespAck,  // Acknowledge
 
     /* Errors */
-    RespErr, // General error
-    RespUnknownReq, // Unknow request type
+    RespErr,             // General error
+    RespUnknownReq,      // Unknow request type
     RespErrNotSupported, // Error, command known but not supported
-    RespErrCRCInvld, // Error, CRC check failed
-    RespAckPageFull, // Acknowledge and info that page buffer is full
-    RespErrPageFull, // Error, word not writable page buffer is full
-    RespErrInvldArg, // Error, invalid argument (out of range, ...)
+    RespErrCRCInvld,     // Error, CRC check failed
+    RespAckPageFull,     // Acknowledge and info that page buffer is full
+    RespErrPageFull,     // Error, word not writable page buffer is full
+    RespErrInvldArg,     // Error, invalid argument (out of range, ...)
 }
 
 impl ResponseType {
@@ -155,9 +153,53 @@ impl ResponseType {
     }
 }
 
+// Message Data -----------------------------------------------------------------------------------
+pub type MsgDataRaw = [u8; 4];
+
+#[derive(Debug, Clone)]
+pub struct MsgData {
+    data: MsgDataRaw,
+}
+
+impl MsgData {
+    pub fn new() -> MsgData {
+        MsgData { data: [0; 4] }
+    }
+
+    pub fn from_array(data: &MsgDataRaw) -> MsgData {
+        MsgData { data: *data }
+    }
+
+    pub fn from_word(value: u32) -> MsgData {
+        MsgData {
+            data: [
+                (value & 0x000000FF) as u8,
+                ((value & 0x0000FF00) >> 8) as u8,
+                ((value & 0x00FF0000) >> 16) as u8,
+                ((value & 0xFF000000) >> 24) as u8,
+            ],
+        }
+    }
+
+    pub fn to_word(&self) -> u32 {
+        (self.data[0] as u32)
+            | ((self.data[1] as u32) << 8)
+            | ((self.data[2] as u32) << 16)
+            | ((self.data[3] as u32) << 24)
+    }
+
+    pub fn get_byte(&self, idx: usize) -> u8 {
+        self.data[idx]
+    }
+
+    pub fn get_array(&self) -> MsgDataRaw {
+        self.data
+    }
+}
+
 // Message ----------------------------------------------------------------------------------------
 
-pub type MsgData = [u8; 4];
+pub type MsgRaw = [u8; 8];
 
 #[derive(Debug)]
 pub struct Msg {
@@ -166,6 +208,53 @@ pub struct Msg {
     pub response: ResponseType,
     pub packet_id: u8,
     pub data: MsgData,
+}
+
+impl Msg {
+    pub fn new(
+        node_id: NodeID,
+        request: RequestType,
+        response: ResponseType,
+        packet_id: u8,
+        data: &MsgData,
+    ) -> Msg {
+        Msg {
+            node_id: node_id,
+            request: request,
+            response: response,
+            packet_id: packet_id,
+            data: data.clone(),
+        }
+    }
+
+    pub fn from_raw_data_array(node_id: NodeID, data: &MsgRaw) -> Msg {
+        let request = RequestType::from_u16((data[0] as u16) | ((data[1] as u16) << 8));
+        let response = ResponseType::from_u8(data[2]);
+        let packet_id = data[3];
+        let data = MsgData::from_array(&[data[4], data[5], data[6], data[7]]);
+
+        Msg {
+            node_id: node_id,
+            request: request,
+            response: response,
+            packet_id: packet_id,
+            data: data,
+        }
+    }
+
+    pub fn to_raw_data_array(&self) -> MsgRaw {
+        let mut data: MsgRaw = [0; 8];
+        data[0] = (self.request.to_u16() & 0x00FF) as u8;
+        data[1] = ((self.request.to_u16() & 0xFF00) >> 8) as u8;
+        data[2] = self.response.to_u8();
+        data[3] = self.packet_id;
+        data[4] = self.data.get_byte(0);
+        data[5] = self.data.get_byte(1);
+        data[6] = self.data.get_byte(2);
+        data[7] = self.data.get_byte(3);
+
+        data
+    }
 }
 
 // Tests ------------------------------------------------------------------------------------------
@@ -206,26 +295,71 @@ mod tests {
         assert_eq!(RequestType::from_u16(0x0001), RequestType::ReqPing);
         assert_eq!(RequestType::from_u16(0x0011), RequestType::ReqResetDevice);
         assert_eq!(RequestType::from_u16(0x0012), RequestType::ReqStartApp);
-        assert_eq!(RequestType::from_u16(0x0101), RequestType::ReqDevInfoBootloaderVersion);
-        assert_eq!(RequestType::from_u16(0x0102), RequestType::ReqDevInfoBootloaderCRC);
+        assert_eq!(
+            RequestType::from_u16(0x0101),
+            RequestType::ReqDevInfoBootloaderVersion
+        );
+        assert_eq!(
+            RequestType::from_u16(0x0102),
+            RequestType::ReqDevInfoBootloaderCRC
+        );
         assert_eq!(RequestType::from_u16(0x0103), RequestType::ReqDevInfoVID);
         assert_eq!(RequestType::from_u16(0x0104), RequestType::ReqDevInfoPID);
         assert_eq!(RequestType::from_u16(0x0105), RequestType::ReqDevInfoPRD);
         assert_eq!(RequestType::from_u16(0x0106), RequestType::ReqDevInfoUID);
-        assert_eq!(RequestType::from_u16(0x0201), RequestType::ReqFlashInfoStartAddr);
-        assert_eq!(RequestType::from_u16(0x0202), RequestType::ReqFlashInfoPageSize);
-        assert_eq!(RequestType::from_u16(0x0203), RequestType::ReqFlashInfoNumPages);
-        assert_eq!(RequestType::from_u16(0x0301), RequestType::ReqAppInfoPageIdx);
-        assert_eq!(RequestType::from_u16(0x0302), RequestType::ReqAppInfoCRCCalc);
-        assert_eq!(RequestType::from_u16(0x0303), RequestType::ReqAppInfoCRCStrd);
+        assert_eq!(
+            RequestType::from_u16(0x0201),
+            RequestType::ReqFlashInfoStartAddr
+        );
+        assert_eq!(
+            RequestType::from_u16(0x0202),
+            RequestType::ReqFlashInfoPageSize
+        );
+        assert_eq!(
+            RequestType::from_u16(0x0203),
+            RequestType::ReqFlashInfoNumPages
+        );
+        assert_eq!(
+            RequestType::from_u16(0x0301),
+            RequestType::ReqAppInfoPageIdx
+        );
+        assert_eq!(
+            RequestType::from_u16(0x0302),
+            RequestType::ReqAppInfoCRCCalc
+        );
+        assert_eq!(
+            RequestType::from_u16(0x0303),
+            RequestType::ReqAppInfoCRCStrd
+        );
         assert_eq!(RequestType::from_u16(0x0401), RequestType::ReqFlashReadWord);
-        assert_eq!(RequestType::from_u16(0x1001), RequestType::ReqPageBufferClear);
-        assert_eq!(RequestType::from_u16(0x1002), RequestType::ReqPageBufferReadWord);
-        assert_eq!(RequestType::from_u16(0x1003), RequestType::ReqPageBufferWriteWord);
-        assert_eq!(RequestType::from_u16(0x1004), RequestType::ReqPageBufferCalcCRC);
-        assert_eq!(RequestType::from_u16(0x1005), RequestType::ReqPageBufferWriteToFlash);
-        assert_eq!(RequestType::from_u16(0x1101), RequestType::ReqFlashWriteErasePage);
-        assert_eq!(RequestType::from_u16(0x1102), RequestType::ReqFlashWriteAppCRC);
+        assert_eq!(
+            RequestType::from_u16(0x1001),
+            RequestType::ReqPageBufferClear
+        );
+        assert_eq!(
+            RequestType::from_u16(0x1002),
+            RequestType::ReqPageBufferReadWord
+        );
+        assert_eq!(
+            RequestType::from_u16(0x1003),
+            RequestType::ReqPageBufferWriteWord
+        );
+        assert_eq!(
+            RequestType::from_u16(0x1004),
+            RequestType::ReqPageBufferCalcCRC
+        );
+        assert_eq!(
+            RequestType::from_u16(0x1005),
+            RequestType::ReqPageBufferWriteToFlash
+        );
+        assert_eq!(
+            RequestType::from_u16(0x1101),
+            RequestType::ReqFlashWriteErasePage
+        );
+        assert_eq!(
+            RequestType::from_u16(0x1102),
+            RequestType::ReqFlashWriteAppCRC
+        );
     }
 
     #[test]
@@ -247,10 +381,85 @@ mod tests {
         assert_eq!(ResponseType::from_u8(0x01), ResponseType::RespAck);
         assert_eq!(ResponseType::from_u8(0xFE), ResponseType::RespErr);
         assert_eq!(ResponseType::from_u8(0xFD), ResponseType::RespUnknownReq);
-        assert_eq!(ResponseType::from_u8(0xFC), ResponseType::RespErrNotSupported);
+        assert_eq!(
+            ResponseType::from_u8(0xFC),
+            ResponseType::RespErrNotSupported
+        );
         assert_eq!(ResponseType::from_u8(0xFB), ResponseType::RespErrCRCInvld);
         assert_eq!(ResponseType::from_u8(0xFA), ResponseType::RespAckPageFull);
         assert_eq!(ResponseType::from_u8(0xF9), ResponseType::RespErrPageFull);
         assert_eq!(ResponseType::from_u8(0xF8), ResponseType::RespErrInvldArg);
+    }
+
+    #[test]
+    fn msg_data_new() {
+        assert_eq!(MsgData::new().get_array(), [0; 4]);
+    }
+
+    #[test]
+    fn msg_data_from_array() {
+        assert_eq!(MsgData::from_array(&[1, 2, 3, 4]).get_array(), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn msg_data_from_word() {
+        assert_eq!(MsgData::from_word(0x01020304).get_array(), [4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn msg_data_to_word() {
+        assert_eq!(MsgData::from_array(&[4, 3, 2, 1]).to_word(), 0x01020304);
+    }
+
+    #[test]
+    fn msg_data_get_byte() {
+        assert_eq!(MsgData::from_array(&[1, 2, 3, 4]).get_byte(0), 1);
+        assert_eq!(MsgData::from_array(&[1, 2, 3, 4]).get_byte(1), 2);
+        assert_eq!(MsgData::from_array(&[1, 2, 3, 4]).get_byte(2), 3);
+        assert_eq!(MsgData::from_array(&[1, 2, 3, 4]).get_byte(3), 4);
+    }
+
+    #[test]
+    fn msg_new() {
+        let msg = Msg::new(
+            NodeID::Broadcast,
+            RequestType::ReqPing,
+            ResponseType::RespAck,
+            5,
+            &MsgData::from_array(&[0x01, 0x02, 0x03, 0x04]),
+        );
+        assert_eq!(msg.node_id, NodeID::Broadcast);
+        assert_eq!(msg.request, RequestType::ReqPing);
+        assert_eq!(msg.response, ResponseType::RespAck);
+        assert_eq!(msg.packet_id, 5);
+        assert_eq!(msg.data.get_array(), [0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn msg_from_raw_data_array() {
+        let msg = Msg::from_raw_data_array(
+            NodeID::Specific(2),
+            &[0x03, 0x01, 0x01, 0x05, 0x01, 0x02, 0x03, 0x04],
+        );
+        assert_eq!(msg.node_id, NodeID::Specific(2));
+        assert_eq!(msg.request, RequestType::ReqDevInfoVID);
+        assert_eq!(msg.response, ResponseType::RespAck);
+        assert_eq!(msg.packet_id, 5);
+        assert_eq!(msg.data.get_array(), [0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn msg_to_raw_data_array() {
+        let msg = Msg::new(
+            NodeID::Specific(2),
+            RequestType::ReqDevInfoVID,
+            ResponseType::RespAck,
+            5,
+            &MsgData::from_array(&[0x01, 0x02, 0x03, 0x04]),
+        );
+        assert_eq!(
+            msg.to_raw_data_array(),
+            [0x03, 0x01, 0x01, 0x05, 0x01, 0x02, 0x03, 0x04]
+        );
     }
 }

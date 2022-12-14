@@ -1,4 +1,4 @@
-name: Build library and run tests
+name: Build & Test App
 on:
   push:
     branches: [ master, devel ]
@@ -15,5 +15,7 @@ jobs:
         uses: actions/checkout@v3
       - name: Build App
         run: cargo build
-      - name: Run Tests
+      - name: Run Tests for App
         run: cargo test
+      - name: Run Tests for Library
+        run: cargo test --lib

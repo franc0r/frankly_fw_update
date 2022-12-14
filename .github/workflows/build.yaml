@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     container: 
       image: bausma/mbed-dev-env:latest
-      options: --user root
+      options: --user user
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3

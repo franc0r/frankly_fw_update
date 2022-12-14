@@ -1,2 +1,2 @@
-pub mod msg;
 pub mod com;
+pub mod firmware;

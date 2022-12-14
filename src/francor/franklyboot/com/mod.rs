@@ -1,4 +1,6 @@
-use crate::francor::franklyboot::msg::Msg;
+pub mod msg;
+
+use msg::Msg;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ComError {

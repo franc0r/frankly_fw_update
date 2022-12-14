@@ -1,0 +1,18 @@
+name: Build library and run tests
+on:
+  push:
+    branches: [ master, devel ]
+
+jobs:
+  ci-pipeline:
+    runs-on: ubuntu-latest
+    container: 
+      image: bausma/mbed-dev-env:latest
+      options: --user root
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+      - name: Build App
+        run: cargo build
+      - name: Run Tests
+        run: cargo test

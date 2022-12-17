@@ -1,13 +1,6 @@
-// Node ID ----------------------------------------------------------------------------------------
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum NodeID {
-    Broadcast,
-    Specific(u8),
-}
-
 // Request Type -----------------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum RequestType {
     ReqPing,        //< Ping device | Response is bootloader version
     ReqResetDevice, //< Resets the device (hardware reset)
@@ -107,7 +100,7 @@ impl RequestType {
 
 // Response types ---------------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ResponseType {
     RespNone, // Unused / ignored
     RespAck,  // Acknowledge
@@ -203,7 +196,6 @@ pub type MsgRaw = [u8; 8];
 
 #[derive(Debug)]
 pub struct Msg {
-    pub node_id: NodeID,
     pub request: RequestType,
     pub response: ResponseType,
     pub packet_id: u8,
@@ -211,15 +203,8 @@ pub struct Msg {
 }
 
 impl Msg {
-    pub fn new(
-        node_id: NodeID,
-        request: RequestType,
-        response: ResponseType,
-        packet_id: u8,
-        data: &MsgData,
-    ) -> Msg {
+    pub fn new(request: RequestType, response: ResponseType, packet_id: u8, data: &MsgData) -> Msg {
         Msg {
-            node_id: node_id,
             request: request,
             response: response,
             packet_id: packet_id,
@@ -227,14 +212,22 @@ impl Msg {
         }
     }
 
-    pub fn from_raw_data_array(node_id: NodeID, data: &MsgRaw) -> Msg {
+    pub fn new_std_request(request: RequestType) -> Msg {
+        Msg {
+            request: request,
+            response: ResponseType::RespNone,
+            packet_id: 0,
+            data: MsgData::new(),
+        }
+    }
+
+    pub fn from_raw_data_array(data: &MsgRaw) -> Msg {
         let request = RequestType::from_u16((data[0] as u16) | ((data[1] as u16) << 8));
         let response = ResponseType::from_u8(data[2]);
         let packet_id = data[3];
         let data = MsgData::from_array(&[data[4], data[5], data[6], data[7]]);
 
         Msg {
-            node_id: node_id,
             request: request,
             response: response,
             packet_id: packet_id,
@@ -254,6 +247,22 @@ impl Msg {
         data[7] = self.data.get_byte(3);
 
         data
+    }
+
+    pub fn get_request(&self) -> RequestType {
+        self.request
+    }
+
+    pub fn get_response(&self) -> ResponseType {
+        self.response
+    }
+
+    pub fn get_packet_id(&self) -> u8 {
+        self.packet_id
+    }
+
+    pub fn get_data(&self) -> &MsgData {
+        &self.data
     }
 }
 
@@ -422,13 +431,11 @@ mod tests {
     #[test]
     fn msg_new() {
         let msg = Msg::new(
-            NodeID::Broadcast,
             RequestType::ReqPing,
             ResponseType::RespAck,
             5,
             &MsgData::from_array(&[0x01, 0x02, 0x03, 0x04]),
         );
-        assert_eq!(msg.node_id, NodeID::Broadcast);
         assert_eq!(msg.request, RequestType::ReqPing);
         assert_eq!(msg.response, ResponseType::RespAck);
         assert_eq!(msg.packet_id, 5);
@@ -437,11 +444,7 @@ mod tests {
 
     #[test]
     fn msg_from_raw_data_array() {
-        let msg = Msg::from_raw_data_array(
-            NodeID::Specific(2),
-            &[0x03, 0x01, 0x01, 0x05, 0x01, 0x02, 0x03, 0x04],
-        );
-        assert_eq!(msg.node_id, NodeID::Specific(2));
+        let msg = Msg::from_raw_data_array(&[0x03, 0x01, 0x01, 0x05, 0x01, 0x02, 0x03, 0x04]);
         assert_eq!(msg.request, RequestType::ReqDevInfoVID);
         assert_eq!(msg.response, ResponseType::RespAck);
         assert_eq!(msg.packet_id, 5);
@@ -451,7 +454,6 @@ mod tests {
     #[test]
     fn msg_to_raw_data_array() {
         let msg = Msg::new(
-            NodeID::Specific(2),
             RequestType::ReqDevInfoVID,
             ResponseType::RespAck,
             5,

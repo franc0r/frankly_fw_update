@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::francor::franklyboot::com::{
     msg::{Msg, RequestType, ResponseType},
     ComError, ComInterface,
@@ -68,6 +70,52 @@ impl DeviceEntry {
 
     pub fn get_request_type(&self) -> RequestType {
         self.request_type
+    }
+}
+
+// Device -----------------------------------------------------------------------------------------
+
+pub struct Device {
+    const_data_lst: HashMap<RequestType, DeviceEntry>,
+}
+
+impl Device {
+    pub fn new() -> Self {
+        let mut device = Device {
+            const_data_lst: HashMap::new(),
+        };
+
+        device.add_const_entry(
+            "Bootloader Version",
+            RequestType::ReqDevInfoBootloaderVersion,
+        );
+
+        device.add_const_entry("Bootloader CRC", RequestType::ReqDevInfoBootloaderCRC);
+        device.add_const_entry("Vendor ID", RequestType::ReqDevInfoVID);
+        device.add_const_entry("Product ID", RequestType::ReqDevInfoPID);
+        device.add_const_entry("Production Date", RequestType::ReqDevInfoPRD);
+        device.add_const_entry("Unique ID", RequestType::ReqDevInfoUID);
+
+        device.add_const_entry("Flash Start Address", RequestType::ReqFlashInfoStartAddr);
+        device.add_const_entry("Flash Page Size", RequestType::ReqFlashInfoPageSize);
+        device.add_const_entry("Flash Number of Pages", RequestType::ReqFlashInfoNumPages);
+
+        device.add_const_entry("App First Page Index", RequestType::ReqAppInfoPageIdx);
+
+        device
+    }
+
+    fn read_const_data<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), ComError> {
+        for (_, entry) in self.const_data_lst.iter_mut() {
+            entry.read_from_device(interface)?;
+        }
+
+        Ok(())
+    }
+
+    fn add_const_entry(&mut self, name: &str, request_type: RequestType) {
+        self.const_data_lst
+            .insert(request_type, DeviceEntry::new(name, request_type));
     }
 }
 
@@ -195,4 +243,7 @@ mod tests {
         assert_eq!(result, Ok(false));
         assert_eq!(entry.value, None);
     }
+
+    #[test]
+    fn device_read_const_data() {}
 }

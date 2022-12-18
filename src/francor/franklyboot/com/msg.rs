@@ -1,6 +1,6 @@
 // Request Type -----------------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 pub enum RequestType {
     ReqPing,        //< Ping device | Response is bootloader version
     ReqResetDevice, //< Resets the device (hardware reset)

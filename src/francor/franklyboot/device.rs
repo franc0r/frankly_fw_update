@@ -85,32 +85,36 @@ impl Device {
             const_data_lst: HashMap::new(),
         };
 
-        device.add_const_entry(
-            "Bootloader Version",
-            RequestType::ReqDevInfoBootloaderVersion,
-        );
+        device.add_const_entry("Bootloader Version", RequestType::DevInfoBootloaderVersion);
 
-        device.add_const_entry("Bootloader CRC", RequestType::ReqDevInfoBootloaderCRC);
-        device.add_const_entry("Vendor ID", RequestType::ReqDevInfoVID);
-        device.add_const_entry("Product ID", RequestType::ReqDevInfoPID);
-        device.add_const_entry("Production Date", RequestType::ReqDevInfoPRD);
-        device.add_const_entry("Unique ID", RequestType::ReqDevInfoUID);
+        device.add_const_entry("Bootloader CRC", RequestType::DevInfoBootloaderCRC);
+        device.add_const_entry("Vendor ID", RequestType::DevInfoVID);
+        device.add_const_entry("Product ID", RequestType::DevInfoPID);
+        device.add_const_entry("Production Date", RequestType::DevInfoPRD);
+        device.add_const_entry("Unique ID", RequestType::DevInfoUID);
 
-        device.add_const_entry("Flash Start Address", RequestType::ReqFlashInfoStartAddr);
-        device.add_const_entry("Flash Page Size", RequestType::ReqFlashInfoPageSize);
-        device.add_const_entry("Flash Number of Pages", RequestType::ReqFlashInfoNumPages);
+        device.add_const_entry("Flash Start Address", RequestType::FlashInfoStartAddr);
+        device.add_const_entry("Flash Page Size", RequestType::FlashInfoPageSize);
+        device.add_const_entry("Flash Number of Pages", RequestType::FlashInfoNumPages);
 
-        device.add_const_entry("App First Page Index", RequestType::ReqAppInfoPageIdx);
+        device.add_const_entry("App First Page Index", RequestType::AppInfoPageIdx);
 
         device
     }
 
-    fn read_const_data<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), ComError> {
+    pub fn read_const_data<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), ComError> {
         for (_, entry) in self.const_data_lst.iter_mut() {
             entry.read_from_device(interface)?;
         }
 
         Ok(())
+    }
+
+    pub fn get_const_data(&self, request_type: RequestType) -> Result<&DeviceEntry, String> {
+        match self.const_data_lst.get(&request_type) {
+            Some(entry) => Ok(&entry),
+            None => Err("Entry not found!".to_string()),
+        }
     }
 
     fn add_const_entry(&mut self, name: &str, request_type: RequestType) {
@@ -151,26 +155,21 @@ mod tests {
 
     #[test]
     fn device_entry_new() {
-        let entry = DeviceEntry::new(
-            "Bootloader Version",
-            RequestType::ReqDevInfoBootloaderVersion,
-        );
+        let entry = DeviceEntry::new("Bootloader Version", RequestType::DevInfoBootloaderVersion);
 
         assert_eq!(entry.name, "Bootloader Version");
-        assert_eq!(entry.request_type, RequestType::ReqDevInfoBootloaderVersion);
+        assert_eq!(entry.request_type, RequestType::DevInfoBootloaderVersion);
         assert_eq!(entry.value, None);
     }
 
     #[test]
     fn device_entry_read() {
-        let mut entry = DeviceEntry::new(
-            "Bootloader Version",
-            RequestType::ReqDevInfoBootloaderVersion,
-        );
+        let mut entry =
+            DeviceEntry::new("Bootloader Version", RequestType::DevInfoBootloaderVersion);
 
         let mut com = ComSimulator::new();
         com.add_response(Msg::new(
-            RequestType::ReqDevInfoBootloaderVersion,
+            RequestType::DevInfoBootloaderVersion,
             ResponseType::RespAck,
             0,
             &MsgData::from_word(0x01020304),
@@ -183,14 +182,12 @@ mod tests {
 
     #[test]
     fn device_entry_read_send_error() {
-        let mut entry = DeviceEntry::new(
-            "Bootloader Version",
-            RequestType::ReqDevInfoBootloaderVersion,
-        );
+        let mut entry =
+            DeviceEntry::new("Bootloader Version", RequestType::DevInfoBootloaderVersion);
 
         let mut com = ComSimulator::new();
         com.add_response(Msg::new(
-            RequestType::ReqDevInfoBootloaderVersion,
+            RequestType::DevInfoBootloaderVersion,
             ResponseType::RespAck,
             0,
             &MsgData::from_word(0x01020304),
@@ -204,14 +201,12 @@ mod tests {
 
     #[test]
     fn device_entry_read_recv_error() {
-        let mut entry = DeviceEntry::new(
-            "Bootloader Version",
-            RequestType::ReqDevInfoBootloaderVersion,
-        );
+        let mut entry =
+            DeviceEntry::new("Bootloader Version", RequestType::DevInfoBootloaderVersion);
 
         let mut com = ComSimulator::new();
         com.add_response(Msg::new(
-            RequestType::ReqDevInfoBootloaderVersion,
+            RequestType::DevInfoBootloaderVersion,
             ResponseType::RespAck,
             0,
             &MsgData::from_word(0x01020304),
@@ -225,14 +220,12 @@ mod tests {
 
     #[test]
     fn device_entry_read_recv_timeout() {
-        let mut entry = DeviceEntry::new(
-            "Bootloader Version",
-            RequestType::ReqDevInfoBootloaderVersion,
-        );
+        let mut entry =
+            DeviceEntry::new("Bootloader Version", RequestType::DevInfoBootloaderVersion);
 
         let mut com = ComSimulator::new();
         com.add_response(Msg::new(
-            RequestType::ReqDevInfoBootloaderVersion,
+            RequestType::DevInfoBootloaderVersion,
             ResponseType::RespAck,
             0,
             &MsgData::from_word(0x01020304),

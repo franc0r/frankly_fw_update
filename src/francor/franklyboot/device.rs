@@ -1,6 +1,6 @@
 use crate::francor::franklyboot::com::{
-    msg::{Msg, RequestType, ResponseType},
-    ComError, ComInterface,
+    msg::{Msg, MsgData, RequestType, ResponseType},
+    ComError, ComInterface, ComSimulator,
 };
 
 // Device Entry -----------------------------------------------------------------------------------
@@ -20,9 +20,9 @@ impl DeviceEntry {
         }
     }
 
-    pub fn read_from_device(
+    pub fn read_from_device<T: ComInterface>(
         &mut self,
-        interface: &mut Box<dyn ComInterface>,
+        interface: &mut T,
     ) -> Result<bool, ComError> {
         // Send request to device
         let request = Msg::new_std_request(self.request_type);
@@ -94,6 +94,8 @@ pub struct FlashInfo {
 }
 */
 
+// Tests ------------------------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +109,89 @@ mod tests {
 
         assert_eq!(entry.name, "Bootloader Version");
         assert_eq!(entry.request_type, RequestType::ReqDevInfoBootloaderVersion);
+        assert_eq!(entry.value, None);
+    }
+
+    #[test]
+    fn device_entry_read() {
+        let mut entry = DeviceEntry::new(
+            "Bootloader Version",
+            RequestType::ReqDevInfoBootloaderVersion,
+        );
+
+        let mut com = ComSimulator::new();
+        com.add_response(Msg::new(
+            RequestType::ReqDevInfoBootloaderVersion,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x01020304),
+        ));
+
+        let result = entry.read_from_device(&mut com);
+        assert_eq!(result, Ok(true));
+        assert_eq!(entry.value, Some(0x01020304));
+    }
+
+    #[test]
+    fn device_entry_read_send_error() {
+        let mut entry = DeviceEntry::new(
+            "Bootloader Version",
+            RequestType::ReqDevInfoBootloaderVersion,
+        );
+
+        let mut com = ComSimulator::new();
+        com.add_response(Msg::new(
+            RequestType::ReqDevInfoBootloaderVersion,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x01020304),
+        ));
+        com.set_send_error(ComError::Error("Send error".to_string()));
+
+        let result = entry.read_from_device(&mut com);
+        assert_eq!(result, Err(ComError::Error("Send error".to_string())));
+        assert_eq!(entry.value, None);
+    }
+
+    #[test]
+    fn device_entry_read_recv_error() {
+        let mut entry = DeviceEntry::new(
+            "Bootloader Version",
+            RequestType::ReqDevInfoBootloaderVersion,
+        );
+
+        let mut com = ComSimulator::new();
+        com.add_response(Msg::new(
+            RequestType::ReqDevInfoBootloaderVersion,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x01020304),
+        ));
+        com.set_recv_error(ComError::Error("Recv error".to_string()));
+
+        let result = entry.read_from_device(&mut com);
+        assert_eq!(result, Err(ComError::Error("Recv error".to_string())));
+        assert_eq!(entry.value, None);
+    }
+
+    #[test]
+    fn device_entry_read_recv_timeout() {
+        let mut entry = DeviceEntry::new(
+            "Bootloader Version",
+            RequestType::ReqDevInfoBootloaderVersion,
+        );
+
+        let mut com = ComSimulator::new();
+        com.add_response(Msg::new(
+            RequestType::ReqDevInfoBootloaderVersion,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x01020304),
+        ));
+        com.set_recv_timeout_error();
+
+        let result = entry.read_from_device(&mut com);
+        assert_eq!(result, Ok(false));
         assert_eq!(entry.value, None);
     }
 }

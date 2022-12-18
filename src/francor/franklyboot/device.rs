@@ -1,6 +1,6 @@
 use crate::francor::franklyboot::com::{
-    msg::{Msg, MsgData, RequestType, ResponseType},
-    ComError, ComInterface, ComSimulator,
+    msg::{Msg, RequestType, ResponseType},
+    ComError, ComInterface,
 };
 
 // Device Entry -----------------------------------------------------------------------------------
@@ -99,6 +99,7 @@ pub struct FlashInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::francor::franklyboot::com::{msg::MsgData, ComSimulator};
 
     #[test]
     fn device_entry_new() {

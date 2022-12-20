@@ -1,12 +1,17 @@
-use std::collections::HashMap;
-
-use crate::francor::franklyboot::com::{
-    msg::{Msg, RequestType, ResponseType},
-    ComError, ComInterface,
+use crate::francor::franklyboot::{
+    com::{
+        self,
+        msg::{Msg, MsgData, RequestType},
+        ComError, ComInterface,
+    },
+    firmware::FlashPage,
 };
+
+use super::firmware::FirmwareDataInterface;
 
 // Device Entry -----------------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct DeviceEntry {
     name: String,
     request_type: RequestType,
@@ -28,31 +33,11 @@ impl DeviceEntry {
     ) -> Result<bool, ComError> {
         // Send request to device
         let request = Msg::new_std_request(self.request_type);
-        interface.send(&request)?;
 
-        // Wait for response
-        let response = interface.recv()?;
-        match response {
-            Some(msg) => {
-                // Check if response is valid
-                let request_valid = msg.get_request() == request.get_request();
-                let response_valid = msg.get_response() == ResponseType::RespAck;
-                let msg_valid = request_valid && response_valid;
-
-                if msg_valid {
-                    self.value = Some(msg.get_data().to_word());
-                    return Ok(true);
-                } else {
-                    self.value = None;
-                    return Err(ComError::MsgError(format!(
-                        "Error Reading \"{:?}\"\nDevice response is invalid! \
-                         TX: Request {:?}\n\tRX: RequestType {:?} ResponseType {:?}",
-                        self.name,
-                        request.get_request(),
-                        msg.get_request(),
-                        msg.get_response()
-                    )));
-                }
+        match com::handle_read_data_request(interface, &request)? {
+            Some(value) => {
+                self.value = Some(value.to_word());
+                return Ok(true);
             }
             None => {
                 return Ok(false);
@@ -76,13 +61,13 @@ impl DeviceEntry {
 // Device -----------------------------------------------------------------------------------------
 
 pub struct Device {
-    const_data_lst: HashMap<RequestType, DeviceEntry>,
+    const_data_lst: Vec<DeviceEntry>,
 }
 
 impl Device {
     pub fn new() -> Self {
         let mut device = Device {
-            const_data_lst: HashMap::new(),
+            const_data_lst: Vec::new(),
         };
 
         device.add_const_entry("Bootloader Version", RequestType::DevInfoBootloaderVersion);
@@ -102,56 +87,174 @@ impl Device {
         device
     }
 
+    pub fn reset_device<T: ComInterface>(&mut self, interface: &mut T) -> Result<bool, ComError> {
+        let reset_request = Msg::new_std_request(RequestType::ResetDevice);
+        return com::handle_command_request(interface, &reset_request);
+    }
+
+    pub fn start_app<T: ComInterface>(&mut self, interface: &mut T) -> Result<bool, ComError> {
+        let start_app_request = Msg::new_std_request(RequestType::StartApp);
+        return com::handle_command_request(interface, &start_app_request);
+    }
+
+    pub fn flash_firmware<T: ComInterface, FW: FirmwareDataInterface>(
+        &mut self,
+        interface: &mut T,
+        firmware: &FW,
+    ) -> Result<(), String> {
+        // Read const data
+        let firmware_size = firmware.get_firmware_data().unwrap().len() as u32;
+        let firmware_pages = firmware_size
+            / self
+                .get_const_data(RequestType::FlashInfoPageSize)
+                .get_value()
+                .unwrap();
+
+        let flash_start_address = self
+            .get_const_data(RequestType::FlashInfoStartAddr)
+            .get_value()
+            .unwrap();
+
+        let flash_page_size = self
+            .get_const_data(RequestType::FlashInfoPageSize)
+            .get_value()
+            .unwrap();
+
+        let flash_num_pages = self
+            .get_const_data(RequestType::FlashInfoNumPages)
+            .get_value()
+            .unwrap();
+
+        let app_start_idx = self
+            .get_const_data(RequestType::AppInfoPageIdx)
+            .get_value()
+            .unwrap();
+
+        // Get flash pages
+        let flash_pages = FlashPage::from_firmware_data(
+            firmware.get_firmware_data().unwrap(),
+            flash_start_address,
+            flash_page_size,
+            flash_num_pages,
+        )
+        .unwrap();
+
+        // Flash all pages
+        let mut page_cnt = 1;
+        let mut page_id_lst: Vec<u32> = flash_pages.keys().map(|x| *x).collect();
+        for page_id in &page_id_lst {
+            let page_id_vld = *page_id >= app_start_idx;
+
+            if !page_id_vld {
+                return Err(format!(
+                    "Firmware contains invalid address! Minimum page id {} < app start page id {}",
+                    page_id, app_start_idx
+                ));
+            }
+
+            println!(
+                "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
+                page_cnt,
+                page_id_lst.len(),
+                page_id,
+                flash_num_pages,
+                flash_pages[&page_id].get_address()
+            );
+
+            // Clear page buffer
+            match self.clear_page_buffer(interface) {
+                Ok(result) => {
+                    if !result {
+                        return Err(format!("Failed to clear page buffer!"));
+                    }
+                }
+                Err(e) => {
+                    return Err(format!("Failed to clear page buffer! Error: {:#?}", e));
+                }
+            }
+
+            // Write bytes to page buffer
+            let byte_lst = flash_pages[page_id].get_bytes();
+            for msg_idx in 0..((flash_page_size as usize) / 4) {
+                let byte_offset = msg_idx * 4;
+
+                let data = MsgData::from_array(&[
+                    byte_lst[byte_offset + 0],
+                    byte_lst[byte_offset + 1],
+                    byte_lst[byte_offset + 2],
+                    byte_lst[byte_offset + 3],
+                ]);
+
+                // Write word to buffer -> calculate packet ID
+                let packet_id = (msg_idx % 256) as u8;
+
+                match com::hande_write_request(
+                    interface,
+                    RequestType::PageBufferWriteWord,
+                    packet_id,
+                    &data,
+                ) {
+                    Ok(result) => {
+                        if !result {
+                            return Err(format!(
+                                "Failed to transmit word to flash buffer! Message timeout!"
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                            "Failed to transmit word to flash buffer!\n{:#?}",
+                            e
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn read_const_data<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), ComError> {
-        for (_, entry) in self.const_data_lst.iter_mut() {
+        for entry in self.const_data_lst.iter_mut() {
             entry.read_from_device(interface)?;
         }
 
         Ok(())
     }
 
-    pub fn get_const_data(&self, request_type: RequestType) -> Result<&DeviceEntry, String> {
-        match self.const_data_lst.get(&request_type) {
-            Some(entry) => Ok(&entry),
-            None => Err("Entry not found!".to_string()),
+    pub fn get_const_data(&self, request_type: RequestType) -> &DeviceEntry {
+        for entry in self.const_data_lst.iter() {
+            if entry.get_request_type() == request_type {
+                return &entry;
+            }
         }
+
+        panic!("Invalid request type specified for get_const_data!");
     }
 
     fn add_const_entry(&mut self, name: &str, request_type: RequestType) {
         self.const_data_lst
-            .insert(request_type, DeviceEntry::new(name, request_type));
+            .push(DeviceEntry::new(name, request_type));
+    }
+
+    pub fn clear_page_buffer<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+    ) -> Result<bool, ComError> {
+        let clear_page_buffer_request = Msg::new_std_request(RequestType::PageBufferClear);
+        return com::handle_command_request(interface, &clear_page_buffer_request);
     }
 }
-
-/*
-pub struct Version {
-    major: u8,
-    minor: u8,
-    patch: u8,
-}
-
-pub struct DeviceInfo {
-    bootloader_version: Version,
-    bootloader_crc: u32,
-    vendor_id: u32,
-    product_id: u32,
-    production_date: u32,
-    unique_id: u32,
-}
-
-pub struct FlashInfo {
-    start_address: u32,
-    page_size: u32,
-    num_pages: u32,
-}
-*/
 
 // Tests ------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::francor::franklyboot::com::{msg::MsgData, ComSimulator};
+    use crate::francor::franklyboot::com::{
+        msg::{MsgData, ResponseType},
+        ComSimulator,
+    };
 
     #[test]
     fn device_entry_new() {
@@ -238,5 +341,146 @@ mod tests {
     }
 
     #[test]
-    fn device_read_const_data() {}
+    fn device_read_const_data() {
+        // Will not work, because hash map will not sort by value
+
+        let mut device = Device::new();
+
+        let mut com = ComSimulator::new();
+        com.add_response(Msg::new(
+            RequestType::DevInfoBootloaderVersion,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x01020304),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::DevInfoBootloaderCRC,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x05060708),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::DevInfoVID,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0xDEADBEFF),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::DevInfoPID,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x1),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::DevInfoPRD,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x2),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::DevInfoUID,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x11223344),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::FlashInfoStartAddr,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x08000000),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::FlashInfoPageSize,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(0x0800),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::FlashInfoNumPages,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(16),
+        ));
+
+        com.add_response(Msg::new(
+            RequestType::AppInfoPageIdx,
+            ResponseType::RespAck,
+            0,
+            &MsgData::from_word(8),
+        ));
+
+        // Read data from device
+        assert!(device.read_const_data(&mut com).is_ok());
+
+        // Check const data
+        assert_eq!(
+            device
+                .get_const_data(RequestType::DevInfoBootloaderVersion)
+                .get_value(),
+            Some(0x01020304)
+        );
+
+        assert_eq!(
+            device
+                .get_const_data(RequestType::DevInfoBootloaderCRC)
+                .get_value(),
+            Some(0x05060708)
+        );
+
+        assert_eq!(
+            device.get_const_data(RequestType::DevInfoVID).get_value(),
+            Some(0xDEADBEFF)
+        );
+
+        assert_eq!(
+            device.get_const_data(RequestType::DevInfoPID).get_value(),
+            Some(0x1)
+        );
+
+        assert_eq!(
+            device.get_const_data(RequestType::DevInfoPRD).get_value(),
+            Some(0x2)
+        );
+
+        assert_eq!(
+            device.get_const_data(RequestType::DevInfoUID).get_value(),
+            Some(0x11223344)
+        );
+
+        assert_eq!(
+            device
+                .get_const_data(RequestType::FlashInfoStartAddr)
+                .get_value(),
+            Some(0x08000000)
+        );
+
+        assert_eq!(
+            device
+                .get_const_data(RequestType::FlashInfoPageSize)
+                .get_value(),
+            Some(0x0800)
+        );
+
+        assert_eq!(
+            device
+                .get_const_data(RequestType::FlashInfoNumPages)
+                .get_value(),
+            Some(16)
+        );
+
+        assert_eq!(
+            device
+                .get_const_data(RequestType::AppInfoPageIdx)
+                .get_value(),
+            Some(8)
+        );
+    }
 }

@@ -149,7 +149,7 @@ impl ResponseType {
 // Message Data -----------------------------------------------------------------------------------
 pub type MsgDataRaw = [u8; 4];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MsgData {
     data: MsgDataRaw,
 }

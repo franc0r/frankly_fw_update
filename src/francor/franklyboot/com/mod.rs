@@ -1,149 +1,61 @@
 pub mod msg;
 
-use msg::{Msg, MsgData, ResponseType};
+use crate::francor::franklyboot::{com::msg::Msg, Error};
+
 use std::collections::VecDeque;
 
-use self::msg::RequestType;
+// ComMode ----------------------------------------------------------------------------------------
 
-// Node ID ----------------------------------------------------------------------------------------
-
+/// Communication mode
+///
+/// This enumeration specifies the supported communication modes by the com interface
+///
 #[derive(Debug, PartialEq, Copy, Clone)]
-pub enum NodeID {
-    None,
+pub enum ComMode {
+    /// Broadcast message to all devices and receive messages from all nodes
     Broadcast,
+
+    /// Send message to specific node
     Specific(u8),
-}
-
-// Com Error --------------------------------------------------------------------------------------
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum ComError {
-    // Error with message content
-    MsgError(String),
-
-    // Error with message driver
-    Error(String),
 }
 
 // Com Interface Trait -----------------------------------------------------------------------------
 
+/// Interface trait for communication with device
+///
+/// Standarized interface trait which every communication interface must implement.
+/// It enables the communication with the devices and handles the low layer com protocol.
+///
 pub trait ComInterface {
-    fn set_filter(&mut self, node_id: u8) -> Result<(), ComError>;
-    fn set_timeout(&mut self, timeout: std::time::Duration) -> Result<(), ComError>;
+    /// Set the communication mode (broadcast or specific node)
+    ///
+    /// Set the communication mode to:
+    /// - Broadcast: Send messages to all devices and receive messages from all nodes
+    /// - Specific: Send messages to specific node and receive messages from this node
+    ///
+    fn set_mode(&mut self, mode: ComMode) -> Result<(), Error>;
+
+    /// Set maximum time to wait for a response
+    fn set_timeout(&mut self, timeout: std::time::Duration) -> Result<(), Error>;
+
+    /// Get active timeout value
     fn get_timeout(&self) -> std::time::Duration;
-    fn send(&mut self, msg: &Msg) -> Result<(), ComError>;
-    fn recv(&mut self) -> Result<Option<Msg>, ComError>;
-}
 
-pub fn handle_read_data_request<T: ComInterface>(
-    interface: &mut T,
-    request: &Msg,
-) -> Result<Option<MsgData>, ComError> {
-    interface.send(request)?;
+    /// Send a message to the device
+    fn send(&mut self, msg: &Msg) -> Result<(), Error>;
 
-    match interface.recv()? {
-        Some(response) => {
-            let request_valid = request.get_request() == response.get_request();
-            let response_valid = response.get_response() == ResponseType::RespAck;
-            let msg_valid = request_valid && response_valid;
-
-            if msg_valid {
-                return Ok(Some(response.get_data().clone()));
-            } else {
-                return Err(ComError::MsgError(format!(
-                    "Device response is invalid! \
-                     TX: Request {:?}\n\tRX: RequestType {:?} ResponseType {:?}",
-                    request.get_request(),
-                    response.get_request(),
-                    response.get_response()
-                )));
-            }
-        }
-        None => {
-            return Ok(None);
-        }
-    }
-}
-
-pub fn hande_write_request<T: ComInterface>(
-    interface: &mut T,
-    request_type: RequestType,
-    packet_id: u8,
-    data: &MsgData,
-) -> Result<bool, ComError> {
-    let request = Msg::new(request_type, ResponseType::RespNone, packet_id, data);
-
-    interface.send(&request)?;
-
-    match interface.recv()? {
-        Some(response) => {
-            let request_valid = request.get_request() == response.get_request();
-            let response_valid = response.get_response() == ResponseType::RespAck;
-            let packet_id_valid = response.get_packet_id() == request.get_packet_id();
-            let data_valid = response.get_data() == request.get_data();
-            let msg_valid = request_valid && response_valid && packet_id_valid && data_valid;
-
-            if msg_valid {
-                return Ok(true);
-            } else {
-                return Err(ComError::MsgError(format!(
-                    "Write data request message error!\n\
-                    Tx: Request: {:#?} Packet-ID: {}, Data: {}\n\
-                    Rx: Request: {:#?} Reponse: {:#?} Packet-ID: {}, Data: {}\n",
-                    request.get_request(),
-                    request.get_packet_id(),
-                    request.get_data().to_word(),
-                    response.get_request(),
-                    response.get_response(),
-                    request.get_packet_id(),
-                    request.get_data().to_word()
-                )));
-            }
-        }
-
-        None => {
-            return Ok(false);
-        }
-    }
-}
-
-pub fn handle_command_request<T: ComInterface>(
-    interface: &mut T,
-    request: &Msg,
-) -> Result<bool, ComError> {
-    interface.send(request)?;
-
-    match interface.recv()? {
-        Some(response) => {
-            let request_valid = request.get_request() == response.get_request();
-            let response_valid = response.get_response() == ResponseType::RespAck;
-            let msg_valid = request_valid && response_valid;
-
-            if msg_valid {
-                return Ok(true);
-            } else {
-                return Err(ComError::MsgError(format!(
-                    "Device response is invalid! \
-                     TX: Request {:?}\n\tRX: RequestType {:?} ResponseType {:?}",
-                    request.get_request(),
-                    response.get_request(),
-                    response.get_response()
-                )));
-            }
-        }
-        None => {
-            return Ok(false);
-        }
-    }
+    /// Receive a message from the device
+    ///
+    /// This function blocks until a message is received or the timeout is reached.
+    fn recv(&mut self) -> Result<Msg, Error>;
 }
 
 // Com Simulator for Testing -----------------------------------------------------------------------
 
 pub struct ComSimulator {
     response_queue: VecDeque<Msg>,
-    send_error: Option<ComError>,
-    recv_error: Option<ComError>,
-    recv_timeout: bool,
+    send_error: Option<Error>,
+    recv_error: Option<Error>,
 }
 
 impl ComSimulator {
@@ -152,7 +64,6 @@ impl ComSimulator {
             response_queue: VecDeque::new(),
             send_error: None,
             recv_error: None,
-            recv_timeout: false,
         }
     }
 
@@ -160,29 +71,25 @@ impl ComSimulator {
         self.response_queue.push_back(msg);
     }
 
-    pub fn get_response(&mut self) -> Option<Msg> {
+    pub fn get_result(&mut self) -> Option<Msg> {
         self.response_queue.pop_front()
     }
 
-    pub fn set_send_error(&mut self, error: ComError) {
+    pub fn set_send_error(&mut self, error: Error) {
         self.send_error = Some(error);
     }
 
-    pub fn set_recv_error(&mut self, error: ComError) {
+    pub fn set_recv_error(&mut self, error: Error) {
         self.recv_error = Some(error);
-    }
-
-    pub fn set_recv_timeout_error(&mut self) {
-        self.recv_timeout = true;
     }
 }
 
 impl ComInterface for ComSimulator {
-    fn set_filter(&mut self, _node_id: u8) -> Result<(), ComError> {
+    fn set_mode(&mut self, _mode: ComMode) -> Result<(), Error> {
         Ok(())
     }
 
-    fn set_timeout(&mut self, _timeout: std::time::Duration) -> Result<(), ComError> {
+    fn set_timeout(&mut self, _timeout: std::time::Duration) -> Result<(), Error> {
         Ok(())
     }
 
@@ -190,7 +97,7 @@ impl ComInterface for ComSimulator {
         std::time::Duration::from_millis(0)
     }
 
-    fn send(&mut self, _msg: &Msg) -> Result<(), ComError> {
+    fn send(&mut self, _msg: &Msg) -> Result<(), Error> {
         if self.send_error.is_some() {
             let error = self.send_error.clone().unwrap();
             self.send_error = None;
@@ -200,18 +107,13 @@ impl ComInterface for ComSimulator {
         }
     }
 
-    fn recv(&mut self) -> Result<Option<Msg>, ComError> {
+    fn recv(&mut self) -> Result<Msg, Error> {
         if self.recv_error.is_some() {
             let error = self.recv_error.clone().unwrap();
             self.recv_error = None;
             Err(error)
         } else {
-            if self.recv_timeout {
-                self.recv_timeout = false;
-                Ok(None)
-            } else {
-                Ok(self.get_response())
-            }
+            Ok(self.response_queue.pop_front().unwrap())
         }
     }
 }

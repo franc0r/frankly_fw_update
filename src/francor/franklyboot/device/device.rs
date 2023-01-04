@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use crate::francor::franklyboot::{
     com::{msg::RequestType, ComInterface},
     device,
@@ -62,16 +64,45 @@ impl Device {
         // Read necessary data to variables
         let _flash_start = self.get_entry_value(RequestType::FlashInfoStartAddr);
         let flash_page_size = self.get_entry_value(RequestType::FlashInfoPageSize);
-        let _flash_num_pages = self.get_entry_value(RequestType::FlashInfoNumPages);
-        let _flash_app_page_idx = self.get_entry_value(RequestType::AppInfoPageIdx);
-        let firmware_size = fwi.get_firmware_data().unwrap().len() as u32;
-        let firmware_num_pages = (firmware_size / flash_page_size) + 1;
+        let flash_num_pages = self.get_entry_value(RequestType::FlashInfoNumPages);
+        let flash_app_page_idx = self.get_entry_value(RequestType::AppInfoPageIdx);
+        let _flash_app_num_pages = flash_num_pages - flash_app_page_idx;
+        let fw_data = fwi.get_firmware_data().unwrap();
+        let fw_size = fw_data.len() as u32;
+        let fw_num_pages = (fw_size / flash_page_size) + 1;
 
+        // Print firmware information
         println!(
             "Firmware Data: Size: {:#.2} kB Num Pages: {}",
-            (firmware_size as f32 / 1024.0),
-            firmware_num_pages
+            (fw_size as f32 / 1024.0),
+            fw_num_pages
         );
+
+        // TODO add check if firmware is valid and fits into flash
+        // Check page id (min limit)
+        // Check firmware size (max limit)
+
+        // TODO add trait for flash pages into firmware mod!
+
+        // Sort page id by rising address
+        let mut fw_page_id_lst: Vec<u32> = fw_data.keys().map(|x| *x).collect();
+        fw_page_id_lst.sort();
+
+        // Transmit all pages of the firmware to the device
+        let mut page_cnt = 0;
+        for fw_page_id in &fw_page_id_lst {
+            // Print info
+            println!(
+                "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
+                page_cnt,
+                fw_page_id_lst.len(),
+                fw_page_id,
+                fw_num_pages,
+                0
+            );
+
+            page_cnt += 1;
+        }
 
         Ok(())
     }

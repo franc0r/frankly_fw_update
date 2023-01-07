@@ -4,6 +4,8 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use std::collections::HashMap;
 const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
+use crate::francor::franklyboot::Error;
+
 // Firmware Data Trait ----------------------------------------------------------------------------
 
 pub type FirmwareDataRaw = HashMap<u32, u8>;
@@ -26,7 +28,7 @@ impl FlashPage {
         flash_address: u32,
         page_size: u32,
         num_pages: u32,
-    ) -> Result<HashMap<u32, FlashPage>, String> {
+    ) -> Result<HashMap<u32, FlashPage>, Error> {
         let mut page_map: HashMap<u32, FlashPage> = HashMap::new();
 
         // Sort addresses by rising order and iterate over every byte
@@ -37,10 +39,10 @@ impl FlashPage {
             // Check if address is valid
             let address_valid = address >= flash_address;
             if !address_valid {
-                return Err(format!(
+                return Err(Error::Error(format!(
                     "Adress {:#X} is out of range! Flash starts at {:#X}!",
                     address, flash_address
-                ));
+                )));
             }
 
             let page_idx = (address - flash_address) / page_size;
@@ -48,10 +50,10 @@ impl FlashPage {
             // Check if page is valid
             let page_idx_valid = page_idx < num_pages;
             if !page_idx_valid {
-                return Err(format!(
+                return Err(Error::Error(format!(
                     "Page {} is out of range! Flash has only {} pages!",
                     page_idx, num_pages
-                ));
+                )));
             }
 
             let page_address = (address - flash_address) % page_size;

@@ -1,10 +1,10 @@
 use crate::francor::franklyboot::{
     com::{msg::MsgData, msg::RequestType, ComInterface},
     device::{Entry, EntryType},
-    firmware::{FirmwareDataInterface, FlashPage},
+    firmware::{FirmwareDataInterface, FlashPageList},
     Error,
 };
-use std::{fmt, ops::Deref};
+use std::fmt;
 
 // Device -----------------------------------------------------------------------------------------
 
@@ -97,24 +97,24 @@ impl Device {
         // Check firmware size (max limit)
 
         // Get flash pages
-        let fw_flash_page_lst =
-            FlashPage::from_firmware_data(fw_data, flash_start, flash_page_size, flash_num_pages)?;
-
-        // Sort page id by rising address
-        let mut fw_page_id_lst: Vec<u32> = fw_flash_page_lst.keys().map(|x| *x).collect();
-        fw_page_id_lst.sort();
+        let fw_flash_page_lst = FlashPageList::from_firmware_data(
+            fw_data,
+            flash_start,
+            flash_page_size,
+            flash_num_pages,
+        )?;
 
         // Transmit all pages of the firmware to the device
         let mut page_cnt = 1;
-        for fw_page_id in &fw_page_id_lst {
+        for page in fw_flash_page_lst.get_vec().iter() {
             // Print info
             println!(
                 "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
                 page_cnt,
-                fw_page_id_lst.len(),
-                fw_page_id,
+                fw_flash_page_lst.len(),
+                page.get_id(),
                 flash_num_pages,
-                fw_flash_page_lst.get(fw_page_id).unwrap().get_address()
+                page.get_address()
             );
 
             // Clear page buffer
@@ -122,7 +122,7 @@ impl Device {
                 .exec(interface)?;
 
             // Write bytes to page buffer
-            let fw_page_byte_lst = fw_flash_page_lst.get(fw_page_id).unwrap().get_bytes();
+            let fw_page_byte_lst = page.get_bytes();
 
             // One word per message
             for msg_idx in 0..((flash_page_size as usize) / 4) {
@@ -148,7 +148,7 @@ impl Device {
             let page_dev_crc = self
                 .read_entry_value(interface, RequestType::PageBufferCalcCRC)?
                 .to_word();
-            let page_calc_crc = fw_flash_page_lst.get(fw_page_id).unwrap().get_crc();
+            let page_calc_crc = page.get_crc();
 
             if page_dev_crc != page_calc_crc {
                 return Err(Error::Error(format!(
@@ -159,11 +159,11 @@ impl Device {
 
             // Erase flash page
             self.get_entry_mut(RequestType::FlashWriteErasePage)
-                .write_value(interface, 0, &MsgData::from_word(*fw_page_id))?;
+                .write_value(interface, 0, &MsgData::from_word(page.get_id()))?;
 
             // Write page buffer to flash
             self.get_entry_mut(RequestType::PageBufferWriteToFlash)
-                .write_value(interface, 0, &MsgData::from_word(*fw_page_id))?;
+                .write_value(interface, 0, &MsgData::from_word(page.get_id()))?;
 
             page_cnt += 1;
         }

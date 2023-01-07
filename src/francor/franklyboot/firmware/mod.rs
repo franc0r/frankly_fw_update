@@ -1,5 +1,8 @@
 pub mod hex_file;
 
+mod flash_page;
+pub use flash_page::FlashPage;
+
 use crc::{Crc, CRC_32_ISO_HDLC};
 use std::collections::HashMap;
 const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
@@ -12,44 +15,6 @@ pub type FirmwareDataRaw = HashMap<u32, u8>;
 
 pub trait FirmwareDataInterface {
     fn get_firmware_data(&self) -> Option<&FirmwareDataRaw>;
-}
-
-// Flash Page -------------------------------------------------------------------------------------
-
-pub struct FlashPage {
-    id: u32,
-    address: u32,
-    bytes: Vec<u8>,
-    crc: u32,
-}
-
-impl FlashPage {
-    fn calculate_crc(&mut self) {
-        self.crc = CRC32.checksum(&self.bytes);
-    }
-    pub fn get_id(&self) -> u32 {
-        self.id
-    }
-
-    pub fn get_address(&self) -> u32 {
-        self.address
-    }
-
-    pub fn get_bytes(&self) -> &Vec<u8> {
-        &self.bytes
-    }
-
-    pub fn get_crc(&self) -> u32 {
-        self.crc
-    }
-
-    pub fn set_byte(&mut self, idx: usize, value: u8) {
-        self.bytes[idx] = value;
-    }
-
-    pub fn get_byte_vec(&self) -> &Vec<u8> {
-        &self.bytes
-    }
 }
 
 // Flash Page Vec ---------------------------------------------------------------------------------
@@ -105,12 +70,11 @@ impl FlashPageList {
             let page = match page_lst.get_mut(page_idx) {
                 Some(e) => e,
                 None => {
-                    page_lst.push(FlashPage {
-                        id: page_idx,
-                        address: flash_address + page_idx * page_size,
-                        bytes: vec![0xFF; page_size as usize],
-                        crc: 0,
-                    });
+                    page_lst.push(FlashPage::new(
+                        page_idx,
+                        flash_address + page_idx * page_size,
+                        vec![0xFF; page_size as usize],
+                    ));
 
                     page_lst.get_mut(page_idx).unwrap()
                 }
@@ -193,7 +157,7 @@ mod tests {
         assert_eq!(page_map.len(), 1);
 
         let page = page_map.get(0).unwrap();
-        assert_eq!(page.address, 0x08000000);
+        assert_eq!(page.get_address(), 0x08000000);
         assert_eq!(page.get_byte_vec().len(), 0x400);
         assert_eq!(page.get_byte_vec()[0], 0x00);
         assert_eq!(page.get_byte_vec()[1], 0x01);
@@ -223,7 +187,7 @@ mod tests {
         assert_eq!(page_map.len(), 2);
 
         let page = page_map.get(0).unwrap();
-        assert_eq!(page.address, 0x08000000);
+        assert_eq!(page.get_address(), 0x08000000);
         assert_eq!(page.get_byte_vec().len(), 0x400);
         assert_eq!(page.get_byte_vec()[0], 0x00);
         assert_eq!(page.get_byte_vec()[1], 0x01);
@@ -233,7 +197,7 @@ mod tests {
         assert_eq!(page.get_byte_vec()[5], 0x04);
 
         let page = page_map.get(2).unwrap();
-        assert_eq!(page.address, 0x08000800);
+        assert_eq!(page.get_address(), 0x08000800);
         assert_eq!(page.get_byte_vec().len(), 0x400);
         assert_eq!(page.get_byte_vec()[0], 0x10);
         assert_eq!(page.get_byte_vec()[1], 0x11);

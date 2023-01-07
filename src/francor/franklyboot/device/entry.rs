@@ -1,6 +1,6 @@
 use crate::francor::franklyboot::{
     com::{
-        msg::{Msg, MsgData, RequestType},
+        msg::{Msg, MsgData, RequestType, ResultType},
         ComInterface,
     },
     Error,
@@ -88,17 +88,15 @@ impl fmt::Display for EntryType {
 /// readable (exec only) or if the entry is not initialized.
 pub struct Entry {
     entry_type: EntryType,
-    name: String,
     request_type: RequestType,
     value: Option<MsgData>,
 }
 
 impl Entry {
     /// Create a new entry
-    pub fn new(entry_type: EntryType, name: &str, request_type: RequestType) -> Self {
+    pub fn new(entry_type: EntryType, request_type: RequestType) -> Self {
         Entry {
             entry_type: entry_type,
-            name: name.to_string(),
             request_type: request_type,
             value: None,
         }
@@ -107,11 +105,6 @@ impl Entry {
     /// Get the type of the entry
     pub fn get_entry_type(&self) -> &EntryType {
         &self.entry_type
-    }
-
-    /// Get the name of the entry
-    pub fn get_name(&self) -> &String {
-        &self.name
     }
 
     /// Get the message request type of the entry
@@ -132,18 +125,58 @@ impl Entry {
     ///
     pub fn read_value<T: ComInterface>(&mut self, interface: &mut T) -> Result<&MsgData, Error> {
         if self.entry_type.is_readable() {
-            if self.entry_type.is_const() && self.value.is_none() {
+            let read_const_value = self.entry_type.is_const() && self.value.is_none();
+            let read_normal_value = self.entry_type.is_readable();
+
+            if read_const_value || read_normal_value {
                 self._read_from_device(interface)?;
             }
 
             Ok(&self.value.as_ref().unwrap())
         } else {
             Err(Error::Error(format!(
-                "Device entry \"{}\" of type {} is not readable!",
-                self.name, self.entry_type
+                "Device entry of type {} is not readable!",
+                self.entry_type
             )))
         }
     }
+
+    /// Write the value of the entry to the device
+    ///
+    /// This function writes the value of the entry to the device. The entry must be of type RW.
+    ///
+    pub fn write_value<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+        packet_id: u8,
+        data: &MsgData,
+    ) -> Result<(), Error> {
+        if self.entry_type.is_writeable() {
+            self._write_to_device(interface, packet_id, data)
+        } else {
+            Err(Error::Error(format!(
+                "Device entry of type {} is not writeable!",
+                self.entry_type
+            )))
+        }
+    }
+
+    /// Execute entry
+    ///
+    /// This function executes the entry. The entry must be of type CMD.
+    ///
+    pub fn exec<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
+        if self.entry_type.is_executable() {
+            self._exec(interface)
+        } else {
+            Err(Error::Error(format!(
+                "Device entry of type {} is not executable!",
+                self.entry_type
+            )))
+        }
+    }
+
+    // Private functions --------------------------------------------------------------------------
 
     fn _read_from_device<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
         let request = Msg::new_std_request(self.request_type);
@@ -153,6 +186,34 @@ impl Entry {
         request.is_response_ok(&response)?;
 
         self.value = Some(response.get_data().clone());
+
+        Ok(())
+    }
+
+    fn _write_to_device<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+        packet_id: u8,
+        data: &MsgData,
+    ) -> Result<(), Error> {
+        let request = Msg::new(self.request_type, ResultType::None, packet_id, data);
+
+        interface.send(&request)?;
+        let response = interface.recv()?;
+        request.is_response_ok(&response)?;
+        request.is_response_data_ok(&response)?;
+
+        self.value = Some(response.get_data().clone());
+
+        Ok(())
+    }
+
+    fn _exec<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
+        let request = Msg::new_std_request(self.request_type);
+
+        interface.send(&request)?;
+        let response = interface.recv()?;
+        request.is_response_ok(&response)?;
 
         Ok(())
     }

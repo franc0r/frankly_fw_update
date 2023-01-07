@@ -38,7 +38,7 @@ pub enum RequestType {
     PageBufferWriteToFlash, //< Write the page buffer to the desired flash page
 
     /* Flash Write Commands*/
-    FlashWriteErasePage, //< Erases an flash page
+    FlashWriteErasePage, //< Erases a flash page
     FlashWriteAppCRC,    //< Writes the CRC of the app to the flash
 }
 
@@ -325,7 +325,7 @@ impl Msg {
     /// - The packet id of the response message is equal to the packet id of the request message
     ///
     /// Data of the request message is not checked!
-    pub fn is_response_ok(self, response: &Msg) -> Result<(), Error> {
+    pub fn is_response_ok(&self, response: &Msg) -> Result<(), Error> {
         let request_valid = self.request == response.request;
         let result_ok = response.result.is_ok();
         let packet_id_valid = self.packet_id == response.packet_id;
@@ -368,6 +368,29 @@ impl Msg {
                     error_info
                 )))
             }
+        }
+    }
+
+    pub fn is_response_data_ok(&self, response: &Msg) -> Result<(), Error> {
+        let data_valid = self.data == response.data;
+
+        if data_valid {
+            Ok(())
+        } else {
+            // Generate error description for better debugging
+            let error_info = format!(
+                "TX: Request: {:?}, Packet-ID: {}, Data: {:?}\n\
+                 RX: Request: {:?}, Packet-ID: {}, Result: {:?}, Data: {:?}",
+                self.request,
+                self.packet_id,
+                self.data,
+                response.request,
+                response.packet_id,
+                response.result,
+                response.data
+            );
+
+            Err(Error::MsgCorruption(format!("Message response data is invalid! Message seems corrupted or critical error in device!\n{}", error_info)))
         }
     }
 
@@ -667,5 +690,27 @@ mod tests {
                 _ => panic!("Unexpected error type!"),
             },
         }
+    }
+
+    #[test]
+    fn msg_is_response_data_ok() {
+        let mut request = Msg::new_std_request(RequestType::Ping);
+        let mut response = Msg::new_std_request(RequestType::Ping);
+
+        request.data = MsgData::from_word(0xDEADBEEF);
+        response.data = MsgData::from_word(0xDEADBEEF);
+
+        assert!(request.is_response_data_ok(&response).is_ok());
+    }
+
+    #[test]
+    fn msg_is_response_data_ok_err() {
+        let mut request = Msg::new_std_request(RequestType::Ping);
+        let mut response = Msg::new_std_request(RequestType::Ping);
+
+        request.data = MsgData::from_word(0xDEADBEEF);
+        response.data = MsgData::from_word(0xDEADBEEA);
+
+        assert!(request.is_response_data_ok(&response).is_err());
     }
 }

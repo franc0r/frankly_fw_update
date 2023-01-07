@@ -1,7 +1,7 @@
 pub mod msg;
+pub mod serial;
 
 use crate::francor::franklyboot::{com::msg::Msg, Error};
-
 use std::collections::VecDeque;
 
 // ComMode ----------------------------------------------------------------------------------------

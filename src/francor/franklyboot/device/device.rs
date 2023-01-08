@@ -1,7 +1,7 @@
 use crate::francor::franklyboot::{
     com::{msg::MsgData, msg::RequestType, ComInterface},
     device::{Entry, EntryType},
-    firmware::{FirmwareDataInterface, FlashPageList},
+    firmware::{AppFirmware, FirmwareDataInterface, FlashPageList},
     Error,
 };
 use std::fmt;

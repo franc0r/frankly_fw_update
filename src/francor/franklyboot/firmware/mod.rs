@@ -17,7 +17,170 @@ pub trait FirmwareDataInterface {
     fn get_firmware_data(&self) -> Option<&FirmwareDataRaw>;
 }
 
-// Flash Page Vec ---------------------------------------------------------------------------------
+// Firmware ---------------------------------------------------------------------------------------
+
+pub const FLASH_DFT_VALUE: u8 = 0xFF;
+
+///
+/// Application Firmware Data Representation
+///
+pub struct AppFirmware {
+    /// Flash start address
+    flash_start_address: u32,
+
+    /// Flash app page id
+    flash_app_page_id: u32,
+
+    /// Flash page size
+    flash_page_size: u32,
+
+    /// Number of pages
+    flash_num_pages: u32,
+
+    /// Vector containing all pages of the firmware
+    page_lst: Vec<FlashPage>,
+
+    // CRC32 value of the complete firmware
+    crc: u32,
+}
+
+impl AppFirmware {
+    ///
+    /// Create new empty firmware object
+    ///
+    pub fn new(
+        flash_start_address: u32,
+        flash_app_page_id: u32,
+        flash_page_size: u32,
+        flash_num_pages: u32,
+    ) -> Self {
+        AppFirmware {
+            flash_start_address: flash_start_address,
+            flash_app_page_id: flash_app_page_id,
+            flash_page_size: flash_page_size,
+            flash_num_pages: flash_num_pages,
+            page_lst: Vec::new(),
+            crc: 0,
+        }
+    }
+
+    ///
+    /// Append firmware data to the firmware object
+    ///
+    pub fn append_firmware(&mut self, data_raw: &FirmwareDataRaw) -> Result<(), Error> {
+        // Sort hash map keys by rising order
+        let mut byte_address_lst: Vec<u32> = data_raw.keys().map(|x| *x).collect();
+        byte_address_lst.sort();
+
+        // Iterate over every byte
+        for byte_address in byte_address_lst {
+            let page_id = (byte_address - self.flash_start_address) / self.flash_page_size;
+            let page_byte_idx = (byte_address - self.flash_start_address) % self.flash_page_size;
+
+            // Check if page ID is valid otherwise throw error
+            let page_id_valid = page_id >= self.flash_app_page_id && page_id < self.flash_num_pages;
+            if !page_id_valid {
+                return Err(Error::Error(format!("Firmware layout invalid! Byte address {:#010X}, Page-ID {} is out of range! (Min ID: {} Max ID: {})", 
+                byte_address, page_id, self.flash_app_page_id, self.flash_num_pages)));
+            }
+
+            // Check if flash page already exists, if not create a new one and get reference to it
+            let page = match self._get_page_mut(page_id) {
+                // Return existing page
+                Some(e) => e,
+
+                // Create a new page
+                None => {
+                    self.page_lst.push(FlashPage::new(
+                        page_id,
+                        self.flash_start_address + page_id * self.flash_page_size,
+                        vec![FLASH_DFT_VALUE; self.flash_page_size as usize],
+                    ));
+
+                    self._get_page_mut(page_id).unwrap()
+                }
+            };
+
+            // Write byte to page
+            page.set_byte(
+                page_byte_idx as usize,
+                *data_raw.get(&byte_address).unwrap(),
+            );
+        }
+
+        // Calculate CRC for all pages
+        for page in self.page_lst.iter_mut() {
+            page.calculate_crc();
+        }
+
+        // Calculate CRC for complete app
+        self._calc_app_crc();
+
+        Ok(())
+    }
+
+    // Getters ------------------------------------------------------------------------------------
+
+    ///
+    /// Get CRC32 value of the complete firmware
+    ///
+    pub fn get_crc(&self) -> u32 {
+        self.crc
+    }
+
+    // Private Functions --------------------------------------------------------------------------
+
+    fn _get_page_mut(&mut self, page_id: u32) -> Option<&mut FlashPage> {
+        for page in self.page_lst.iter_mut() {
+            if page.get_id() == page_id {
+                return Some(page);
+            }
+        }
+
+        return None;
+    }
+
+    fn _get_page(&self, page_id: u32) -> Option<&FlashPage> {
+        for page in self.page_lst.iter() {
+            if page.get_id() == page_id {
+                return Some(page);
+            }
+        }
+
+        return None;
+    }
+
+    fn _calc_app_crc(&mut self) {
+        // Create vector containing all bytes of the flash
+        let mut app_flash = Vec::<u8>::new();
+        for page_id in self.flash_app_page_id..self.flash_num_pages {
+            // Check if page exists
+            match self._get_page(page_id) {
+                Some(page) => {
+                    // Page exists append bytes to flash
+                    for byte_value in page.get_bytes().iter() {
+                        app_flash.push(*byte_value);
+                    }
+                }
+                None => {
+                    // Page does not exist fill bytes with default value
+                    for _byte_idx in 0..self.flash_page_size {
+                        app_flash.push(FLASH_DFT_VALUE);
+                    }
+                }
+            }
+        }
+
+        // Last four bytes in flash are ignored, because they store the CRC value
+        app_flash.pop();
+        app_flash.pop();
+        app_flash.pop();
+        app_flash.pop();
+
+        // Calculate app CRC
+        self.crc = CRC32.checksum(&app_flash);
+    }
+}
 
 pub struct FlashPageList {
     page_vec: Vec<FlashPage>,
@@ -73,7 +236,7 @@ impl FlashPageList {
                     page_lst.push(FlashPage::new(
                         page_idx,
                         flash_address + page_idx * page_size,
-                        vec![0xFF; page_size as usize],
+                        vec![FLASH_DFT_VALUE; page_size as usize],
                     ));
 
                     page_lst.get_mut(page_idx).unwrap()

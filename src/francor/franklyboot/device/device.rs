@@ -1,7 +1,7 @@
 use crate::francor::franklyboot::{
     com::{msg::MsgData, msg::RequestType, ComInterface},
     device::{Entry, EntryType},
-    firmware::{AppFirmware, FirmwareDataInterface, FlashPageList},
+    firmware::{AppFirmware, FirmwareDataInterface},
     Error,
 };
 use std::fmt;
@@ -50,15 +50,17 @@ impl Device {
         device._add_entry(EntryType::Const, RequestType::FlashInfoNumPages);
 
         device._add_entry(EntryType::Const, RequestType::AppInfoPageIdx);
+        device._add_entry(EntryType::RO, RequestType::AppInfoCRCCalc);
 
         device._add_entry(EntryType::Cmd, RequestType::PageBufferClear);
         device._add_entry(EntryType::RW, RequestType::PageBufferWriteWord);
         device._add_entry(EntryType::RO, RequestType::PageBufferCalcCRC);
-        device._add_entry(EntryType::RW, RequestType::PageBufferWriteToFlash);
+        device._add_entry(EntryType::Cmd, RequestType::PageBufferWriteToFlash);
 
-        device._add_entry(EntryType::RW, RequestType::FlashWriteErasePage);
+        device._add_entry(EntryType::Cmd, RequestType::FlashWriteErasePage);
+        device._add_entry(EntryType::Cmd, RequestType::FlashWriteAppCRC);
 
-        device._add_entry(EntryType::RW, RequestType::StartApp);
+        device._add_entry(EntryType::Cmd, RequestType::StartApp);
 
         device
     }
@@ -80,7 +82,8 @@ impl Device {
         let flash_page_size = self.get_entry_value(RequestType::FlashInfoPageSize);
         let flash_num_pages = self.get_entry_value(RequestType::FlashInfoNumPages);
         let flash_app_page_idx = self.get_entry_value(RequestType::AppInfoPageIdx);
-        let _flash_app_num_pages = flash_num_pages - flash_app_page_idx;
+        let flash_app_start = flash_start + (flash_app_page_idx * flash_page_size);
+        let flash_app_num_pages = flash_num_pages - flash_app_page_idx;
         let fw_data = fwi.get_firmware_data().unwrap();
         let fw_size = fw_data.len() as u32;
         let fw_num_pages = (fw_size / flash_page_size) + 1;
@@ -96,33 +99,31 @@ impl Device {
         // Check page id (min limit)
         // Check firmware size (max limit)
 
-        // Get flash pages
-        let fw_flash_page_lst = FlashPageList::from_firmware_data(
-            fw_data,
-            flash_start,
-            flash_page_size,
-            flash_num_pages,
-        )?;
+        // Create app firmware representation
+        let mut app_fw = AppFirmware::new(flash_app_start, flash_page_size, flash_app_num_pages);
+        app_fw.append_firmware(fw_data)?;
 
         // Transmit all pages of the firmware to the device
         let mut page_cnt = 1;
-        for page in fw_flash_page_lst.get_vec().iter() {
+        for app_page in app_fw.get_page_lst().iter() {
+            let flash_page_id = app_page.get_id() + flash_app_page_idx;
+
             // Print info
             println!(
                 "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
                 page_cnt,
-                fw_flash_page_lst.len(),
-                page.get_id(),
+                app_fw.get_page_lst().len(),
+                flash_page_id,
                 flash_num_pages,
-                page.get_address()
+                app_page.get_address()
             );
 
             // Clear page buffer
             self.get_entry_mut(RequestType::PageBufferClear)
-                .exec(interface)?;
+                .exec(interface, 0)?;
 
             // Write bytes to page buffer
-            let fw_page_byte_lst = page.get_bytes();
+            let fw_page_byte_lst = app_page.get_bytes();
 
             // One word per message
             for msg_idx in 0..((flash_page_size as usize) / 4) {
@@ -148,7 +149,7 @@ impl Device {
             let page_dev_crc = self
                 .read_entry_value(interface, RequestType::PageBufferCalcCRC)?
                 .to_word();
-            let page_calc_crc = page.get_crc();
+            let page_calc_crc = app_page.get_crc();
 
             if page_dev_crc != page_calc_crc {
                 return Err(Error::Error(format!(
@@ -159,21 +160,38 @@ impl Device {
 
             // Erase flash page
             self.get_entry_mut(RequestType::FlashWriteErasePage)
-                .write_value(interface, 0, &MsgData::from_word(page.get_id()))?;
+                .exec(interface, flash_page_id)?;
 
             // Write page buffer to flash
             self.get_entry_mut(RequestType::PageBufferWriteToFlash)
-                .write_value(interface, 0, &MsgData::from_word(page.get_id()))?;
+                .exec(interface, flash_page_id)?;
 
             page_cnt += 1;
         }
 
-        // Start app unsafe
-        self.get_entry_mut(RequestType::StartApp).write_value(
-            interface,
-            0,
-            &MsgData::from_word(0xFFFFFFFF),
-        )?;
+        // Read calculated app CRC value from device
+        let app_dev_crc = self
+            .read_entry_value(interface, RequestType::AppInfoCRCCalc)?
+            .to_word();
+
+        // Get app CRC value from firmware
+        let app_calc_crc = app_fw.get_crc();
+
+        // Check if both CRC values are equal
+        if app_dev_crc != app_calc_crc {
+            return Err(Error::Error(format!(
+                "App CRC is invalid! Calc: {:#010X} Dev: {:#010X}!",
+                app_calc_crc, app_dev_crc
+            )));
+        }
+
+        // Store CRC value in device
+        self.get_entry_mut(RequestType::FlashWriteAppCRC)
+            .exec(interface, app_calc_crc)?;
+
+        // Start app
+        self.get_entry_mut(RequestType::StartApp)
+            .exec(interface, 0)?;
 
         Ok(())
     }

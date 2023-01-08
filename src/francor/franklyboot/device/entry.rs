@@ -165,9 +165,9 @@ impl Entry {
     ///
     /// This function executes the entry. The entry must be of type CMD.
     ///
-    pub fn exec<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
+    pub fn exec<T: ComInterface>(&mut self, interface: &mut T, argument: u32) -> Result<(), Error> {
         if self.entry_type.is_executable() {
-            self._exec(interface)
+            self._write_to_device(interface, 0, &MsgData::from_word(argument))
         } else {
             Err(Error::Error(format!(
                 "Device entry of type {} is not executable!",
@@ -207,106 +207,6 @@ impl Entry {
 
         Ok(())
     }
-
-    fn _exec<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
-        let request = Msg::new_std_request(self.request_type);
-
-        interface.send(&request)?;
-        let response = interface.recv()?;
-        request.is_response_ok(&response)?;
-
-        Ok(())
-    }
-
-    /*
-        pub fn write_value<T: ComInterface>(
-            &mut self,
-            interface: &mut T,
-            data: &MsgData,
-        ) -> Result<bool, Error> {
-            if self.entry_type.is_writeable() {
-                self._write_to_device(interface, data)
-            } else {
-                Err(Error::Error(format!(
-                    "Device entry \"{}\" of type {} is not writeable!",
-                    self.name, self.entry_type
-                )))
-            }
-        }
-
-        pub fn exec<T: ComInterface>(&mut self, interface: &mut T) -> Result<bool, Error> {
-            let request = Msg::new_std_request(self.request_type);
-
-            interface.send(&request)?;
-
-            match interface.recv()? {
-                Some(response) => {
-                    let request_valid = response.get_request() == request.get_request();
-                    let response_valid = response.get_response() == ResponseType::RespAck;
-                    let packet_id_valid = response.get_packet_id() == request.get_packet_id();
-                    let msg_valid = request_valid && response_valid && packet_id_valid;
-
-                    if msg_valid {
-                        self.value = Some(response.get_data().clone());
-                        Ok(true)
-                    } else {
-                        Err(Error::Error(format!(
-                            "Invalid response from device!\n\
-                            Read device entry \"{}\"\n\
-                            Tx: {:#?} {}\n\
-                            Rx: {:#?} {:#?} {}",
-                            self.name,
-                            request.get_request(),
-                            request.get_packet_id(),
-                            response.get_request(),
-                            response.get_response(),
-                            response.get_packet_id()
-                        )))
-                    }
-                }
-                None => Ok(false),
-            }
-        }
-
-        fn _write_to_device<T: ComInterface>(
-            &mut self,
-            interface: &mut T,
-            data: &MsgData,
-        ) -> Result<bool, ComError> {
-            let request = Msg::new(self.request_type, ResponseType::RespNone, 0, data);
-
-            interface.send(&request)?;
-
-            match interface.recv()? {
-                Some(response) => {
-                    let request_valid = response.get_request() == request.get_request();
-                    let response_valid = response.get_response() == ResponseType::RespAck;
-                    let packet_id_valid = response.get_packet_id() == request.get_packet_id();
-                    let data_valid = response.get_data() == request.get_data();
-                    let msg_valid = request_valid && response_valid && packet_id_valid && data_valid;
-
-                    if msg_valid {
-                        self.value = Some(response.get_data().clone());
-                        Ok(true)
-                    } else {
-                        Err(ComError::Error(format!(
-                            "Invalid response from device!\n\
-                            Write device entry \"{}\"\n\
-                            Tx: {:#?} {}\n\
-                            Rx: {:#?} {:#?} {}",
-                            self.name,
-                            request.get_request(),
-                            request.get_packet_id(),
-                            response.get_request(),
-                            response.get_response(),
-                            response.get_packet_id()
-                        )))
-                    }
-                }
-                None => Ok(false),
-            }
-        }
-    */
 }
 
 // Tests ------------------------------------------------------------------------------------------

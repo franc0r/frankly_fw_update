@@ -25,11 +25,8 @@ pub const FLASH_DFT_VALUE: u8 = 0xFF;
 /// Application Firmware Data Representation
 ///
 pub struct AppFirmware {
-    /// Flash start address
+    /// Flash start address (important address where app area starts)
     flash_start_address: u32,
-
-    /// Flash app page id
-    flash_app_page_id: u32,
 
     /// Flash page size
     flash_page_size: u32,
@@ -48,15 +45,9 @@ impl AppFirmware {
     ///
     /// Create new empty firmware object
     ///
-    pub fn new(
-        flash_start_address: u32,
-        flash_app_page_id: u32,
-        flash_page_size: u32,
-        flash_num_pages: u32,
-    ) -> Self {
+    pub fn new(flash_start_address: u32, flash_page_size: u32, flash_num_pages: u32) -> Self {
         AppFirmware {
             flash_start_address: flash_start_address,
-            flash_app_page_id: flash_app_page_id,
             flash_page_size: flash_page_size,
             flash_num_pages: flash_num_pages,
             page_lst: Vec::new(),
@@ -74,14 +65,21 @@ impl AppFirmware {
 
         // Iterate over every byte
         for byte_address in byte_address_lst {
+            // Check if byte address is valid otherwise throw error
+            let byte_address_valid = byte_address >= self.flash_start_address;
+            if !byte_address_valid {
+                return Err(Error::Error(format!("Firmware layout invalid! Byte address {:#010X} is out of range! (Min Address: {:#010X})", 
+                byte_address, self.flash_start_address)));
+            }
+
             let page_id = (byte_address - self.flash_start_address) / self.flash_page_size;
             let page_byte_idx = (byte_address - self.flash_start_address) % self.flash_page_size;
 
             // Check if page ID is valid otherwise throw error
-            let page_id_valid = page_id >= self.flash_app_page_id && page_id < self.flash_num_pages;
+            let page_id_valid = page_id < self.flash_num_pages;
             if !page_id_valid {
-                return Err(Error::Error(format!("Firmware layout invalid! Byte address {:#010X}, Page-ID {} is out of range! (Min ID: {} Max ID: {})", 
-                byte_address, page_id, self.flash_app_page_id, self.flash_num_pages)));
+                return Err(Error::Error(format!("Firmware layout invalid! Byte address {:#010X}, Page-ID {} is out of range! (Max ID: {})", 
+                byte_address, page_id, self.flash_num_pages)));
             }
 
             // Check if flash page already exists, if not create a new one and get reference to it
@@ -128,6 +126,26 @@ impl AppFirmware {
         self.crc
     }
 
+    ///
+    /// Get reference to page
+    ///
+    pub fn get_page(&self, page_id: u32) -> Option<&FlashPage> {
+        for page in self.page_lst.iter() {
+            if page.get_id() == page_id {
+                return Some(page);
+            }
+        }
+
+        return None;
+    }
+
+    ///
+    /// Get reference to page list
+    ///
+    pub fn get_page_lst(&self) -> &Vec<FlashPage> {
+        &self.page_lst
+    }
+
     // Private Functions --------------------------------------------------------------------------
 
     fn _get_page_mut(&mut self, page_id: u32) -> Option<&mut FlashPage> {
@@ -140,22 +158,12 @@ impl AppFirmware {
         return None;
     }
 
-    fn _get_page(&self, page_id: u32) -> Option<&FlashPage> {
-        for page in self.page_lst.iter() {
-            if page.get_id() == page_id {
-                return Some(page);
-            }
-        }
-
-        return None;
-    }
-
     fn _calc_app_crc(&mut self) {
         // Create vector containing all bytes of the flash
         let mut app_flash = Vec::<u8>::new();
-        for page_id in self.flash_app_page_id..self.flash_num_pages {
+        for page_id in 0..self.flash_num_pages {
             // Check if page exists
-            match self._get_page(page_id) {
+            match self.get_page(page_id) {
                 Some(page) => {
                     // Page exists append bytes to flash
                     for byte_value in page.get_bytes().iter() {
@@ -182,114 +190,7 @@ impl AppFirmware {
     }
 }
 
-pub struct FlashPageList {
-    page_vec: Vec<FlashPage>,
-}
-
-impl FlashPageList {
-    pub fn new() -> FlashPageList {
-        FlashPageList {
-            page_vec: Vec::new(),
-        }
-    }
-
-    pub fn from_firmware_data(
-        firmware_data: &FirmwareDataRaw,
-        flash_address: u32,
-        page_size: u32,
-        num_pages: u32,
-    ) -> Result<FlashPageList, Error> {
-        // Create new page
-        let mut page_lst = FlashPageList::new();
-
-        // Sort addresses by rising order and iterate over every byte
-        let mut address_lst: Vec<u32> = firmware_data.keys().map(|x| *x).collect();
-
-        address_lst.sort();
-        for address in address_lst {
-            // Check if address is valid
-            let address_valid = address >= flash_address;
-            if !address_valid {
-                return Err(Error::Error(format!(
-                    "Adress {:#X} is out of range! Flash starts at {:#X}!",
-                    address, flash_address
-                )));
-            }
-
-            let page_idx = (address - flash_address) / page_size;
-
-            // Check if page is valid
-            let page_idx_valid = page_idx < num_pages;
-            if !page_idx_valid {
-                return Err(Error::Error(format!(
-                    "Page {} is out of range! Flash has only {} pages!",
-                    page_idx, num_pages
-                )));
-            }
-
-            let page_address = (address - flash_address) % page_size;
-
-            // Check if page entry exists if not create one
-            let page = match page_lst.get_mut(page_idx) {
-                Some(e) => e,
-                None => {
-                    page_lst.push(FlashPage::new(
-                        page_idx,
-                        flash_address + page_idx * page_size,
-                        vec![FLASH_DFT_VALUE; page_size as usize],
-                    ));
-
-                    page_lst.get_mut(page_idx).unwrap()
-                }
-            };
-
-            page.set_byte(page_address as usize, firmware_data[&address]);
-        }
-
-        // Calculate CRC values
-        for page in page_lst.get_vec_mut().iter_mut() {
-            page.calculate_crc()
-        }
-
-        Ok(page_lst)
-    }
-
-    pub fn get(&self, id: u32) -> Option<&FlashPage> {
-        for page in self.page_vec.iter() {
-            if page.get_id() == id {
-                return Some(page);
-            }
-        }
-
-        return None;
-    }
-
-    pub fn get_mut(&mut self, id: u32) -> Option<&mut FlashPage> {
-        for page in self.page_vec.iter_mut() {
-            if page.get_id() == id {
-                return Some(page);
-            }
-        }
-
-        return None;
-    }
-
-    pub fn push(&mut self, page: FlashPage) {
-        self.page_vec.push(page);
-    }
-
-    pub fn get_vec(&self) -> &Vec<FlashPage> {
-        &self.page_vec
-    }
-
-    pub fn get_vec_mut(&mut self) -> &mut Vec<FlashPage> {
-        &mut self.page_vec
-    }
-
-    pub fn len(&self) -> usize {
-        self.page_vec.len()
-    }
-}
+// Tests ------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -300,7 +201,8 @@ mod tests {
         let mut map: FirmwareDataRaw = HashMap::new();
         map.insert(0x07000000, 0x00);
 
-        let result = FlashPageList::from_firmware_data(&map, 0x08000000, 0x400, 0x10);
+        let mut app_fw = AppFirmware::new(0x08000000, 0x400, 0x10);
+        let result = app_fw.append_firmware(&map);
         assert!(result.is_err());
     }
 
@@ -313,13 +215,13 @@ mod tests {
         map.insert(0x08000003, 0x03);
         map.insert(0x08000005, 0x04);
 
-        let result = FlashPageList::from_firmware_data(&map, 0x08000000, 0x400, 0x10);
+        let mut app_fw = AppFirmware::new(0x08000000, 0x400, 0x10);
+        let result = app_fw.append_firmware(&map);
         assert!(result.is_ok());
 
-        let page_map = result.unwrap();
-        assert_eq!(page_map.len(), 1);
+        assert_eq!(app_fw.get_page_lst().len(), 1);
 
-        let page = page_map.get(0).unwrap();
+        let page = app_fw.get_page(0).unwrap();
         assert_eq!(page.get_address(), 0x08000000);
         assert_eq!(page.get_byte_vec().len(), 0x400);
         assert_eq!(page.get_byte_vec()[0], 0x00);
@@ -343,13 +245,13 @@ mod tests {
         map.insert(0x08000801, 0x11);
         map.insert(0x0800080F, 0x12);
 
-        let result = FlashPageList::from_firmware_data(&map, 0x08000000, 0x400, 0x10);
+        let mut app_fw = AppFirmware::new(0x08000000, 0x400, 0x10);
+        let result = app_fw.append_firmware(&map);
         assert!(result.is_ok());
 
-        let page_map = result.unwrap();
-        assert_eq!(page_map.len(), 2);
+        assert_eq!(app_fw.get_page_lst().len(), 2);
 
-        let page = page_map.get(0).unwrap();
+        let page = app_fw.get_page(0).unwrap();
         assert_eq!(page.get_address(), 0x08000000);
         assert_eq!(page.get_byte_vec().len(), 0x400);
         assert_eq!(page.get_byte_vec()[0], 0x00);
@@ -359,7 +261,7 @@ mod tests {
         assert_eq!(page.get_byte_vec()[4], 0xFF);
         assert_eq!(page.get_byte_vec()[5], 0x04);
 
-        let page = page_map.get(2).unwrap();
+        let page = app_fw.get_page(2).unwrap();
         assert_eq!(page.get_address(), 0x08000800);
         assert_eq!(page.get_byte_vec().len(), 0x400);
         assert_eq!(page.get_byte_vec()[0], 0x10);

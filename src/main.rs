@@ -1,5 +1,5 @@
 use frankly_fw_update_cli::francor::franklyboot::{
-    com::{serial::SerialInterface, ComInterface},
+    com::{can::CANInterface, serial::SerialInterface},
     device::Device,
     firmware::hex_file::HexFile,
     Error,
@@ -21,13 +21,15 @@ fn main() {
     let mut device = Device::new();
 
     // Create new serial interface
-    let mut com = SerialInterface::open("/dev/ttyACM0", 115200).unwrap();
+    //let mut com = SerialInterface::open("/dev/ttyACM0", 115200).unwrap();
+    let mut com = CANInterface::open("can0").unwrap();
 
     device.init(&mut com).unwrap();
     println!("Device: {}", device);
 
     // Open firmware file
-    let firmware = HexFile::from_file("./tests/data/TestG431RBBlinky.hex").unwrap();
+    let firmware = HexFile::from_file("./tests/data/example_app_g431rb.hex").unwrap();
+    //let firmware = HexFile::from_file("./tests/data/TestG431RBBlinky.hex").unwrap();
 
     // Flash firmware
     match device.flash(&mut com, &firmware) {

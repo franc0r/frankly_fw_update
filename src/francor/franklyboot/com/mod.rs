@@ -1,3 +1,4 @@
+pub mod can;
 pub mod msg;
 pub mod serial;
 

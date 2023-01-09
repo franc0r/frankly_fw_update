@@ -113,7 +113,7 @@ impl Device {
                 "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
                 page_cnt,
                 app_fw.get_page_lst().len(),
-                flash_page_id,
+                flash_page_id + 1,
                 flash_num_pages,
                 app_page.get_address()
             );
@@ -169,29 +169,60 @@ impl Device {
             page_cnt += 1;
         }
 
-        // Read calculated app CRC value from device
-        let app_dev_crc = self
-            .read_entry_value(interface, RequestType::AppInfoCRCCalc)?
-            .to_word();
-
-        // Get app CRC value from firmware
+        let mut flash_erased = false;
         let app_calc_crc = app_fw.get_crc();
+        loop {
+            // Read calculated app CRC value from device
+            let app_dev_crc = self
+                .read_entry_value(interface, RequestType::AppInfoCRCCalc)?
+                .to_word();
 
-        // Check if both CRC values are equal
-        if app_dev_crc != app_calc_crc {
-            return Err(Error::Error(format!(
-                "App CRC is invalid! Calc: {:#010X} Dev: {:#010X}!",
-                app_calc_crc, app_dev_crc
-            )));
+            // Check if calculated and device CRC is equal
+            let crc_valid = app_dev_crc == app_calc_crc;
+
+            // CRC can be invalid if the new app needs less flash than the old one
+            // Try to erase all unused pages
+            if !crc_valid && !flash_erased {
+                println!("CRC invalid! Erasing complete unused flash area");
+
+                // Check all app pages
+                for app_page_id in 0..flash_app_num_pages {
+                    let flash_page_id = app_page_id + flash_app_page_idx;
+
+                    // Check if page is used
+                    if app_fw.get_page(app_page_id).is_none() {
+                        println!(
+                            "Erasing unused [Page: {}/{}]",
+                            flash_page_id + 1,
+                            flash_num_pages
+                        );
+
+                        // Erase flash page
+                        self.get_entry_mut(RequestType::FlashWriteErasePage)
+                            .exec(interface, flash_page_id)?;
+                    }
+                }
+
+                flash_erased = true;
+            } else if !crc_valid && flash_erased {
+                return Err(Error::Error(format!(
+                    "App CRC is invalid! Calc: {:#010X} Dev: {:#010X}!",
+                    app_calc_crc, app_dev_crc
+                )));
+            } else {
+                break;
+            }
         }
 
-        // Store CRC value in device
+        println!("Flashing App CRC");
         self.get_entry_mut(RequestType::FlashWriteAppCRC)
             .exec(interface, app_calc_crc)?;
 
-        // Start app
+        println!("Starting App");
         self.get_entry_mut(RequestType::StartApp)
             .exec(interface, 0)?;
+
+        println!("App successfully flashed & started!");
 
         Ok(())
     }

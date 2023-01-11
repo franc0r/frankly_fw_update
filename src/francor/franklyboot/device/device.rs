@@ -169,54 +169,11 @@ impl Device {
             page_cnt += 1;
         }
 
-        let mut flash_erased = false;
-        let app_calc_crc = app_fw.get_crc();
-        loop {
-            // Read calculated app CRC value from device
-            let app_dev_crc = self
-                .read_entry_value(interface, RequestType::AppInfoCRCCalc)?
-                .to_word();
-
-            // Check if calculated and device CRC is equal
-            let crc_valid = app_dev_crc == app_calc_crc;
-
-            // CRC can be invalid if the new app needs less flash than the old one
-            // Try to erase all unused pages
-            if !crc_valid && !flash_erased {
-                println!("CRC invalid! Erasing complete unused flash area");
-
-                // Check all app pages
-                for app_page_id in 0..flash_app_num_pages {
-                    let flash_page_id = app_page_id + flash_app_page_idx;
-
-                    // Check if page is used
-                    if app_fw.get_page(app_page_id).is_none() {
-                        println!(
-                            "Erasing unused [Page: {}/{}]",
-                            flash_page_id + 1,
-                            flash_num_pages
-                        );
-
-                        // Erase flash page
-                        self.get_entry_mut(RequestType::FlashWriteErasePage)
-                            .exec(interface, flash_page_id)?;
-                    }
-                }
-
-                flash_erased = true;
-            } else if !crc_valid && flash_erased {
-                return Err(Error::Error(format!(
-                    "App CRC is invalid! Calc: {:#010X} Dev: {:#010X}!",
-                    app_calc_crc, app_dev_crc
-                )));
-            } else {
-                break;
-            }
-        }
+        println!("Checking CRC");
+        self._check_app_crc(interface, &app_fw)?;
 
         println!("Flashing App CRC");
-        self.get_entry_mut(RequestType::FlashWriteAppCRC)
-            .exec(interface, app_calc_crc)?;
+        self._flash_app_crc(interface, app_fw.get_crc())?;
 
         println!("Starting App");
         self.get_entry_mut(RequestType::StartApp)
@@ -275,6 +232,18 @@ impl Device {
         self.get_entry_mut(request_type).read_value(interface)
     }
 
+    pub fn is_app_crc_valid<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+        app: &AppFirmware,
+    ) -> Result<bool, Error> {
+        let app_crc = app.get_crc();
+        let dev_crc = self
+            .read_entry_value(interface, RequestType::AppInfoCRCCalc)?
+            .to_word();
+        Ok(app_crc == dev_crc)
+    }
+
     // Private Functions --------------------------------------------------------------------------
 
     fn _add_entry(&mut self, entry_type: EntryType, request_type: RequestType) {
@@ -289,6 +258,70 @@ impl Device {
         }
 
         return Ok(());
+    }
+
+    fn _erase_unused_pages<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+        app: &AppFirmware,
+    ) -> Result<(), Error> {
+        let flash_num_pages = self.get_entry_value(RequestType::FlashInfoNumPages);
+        let app_start_page_idx = self.get_entry_value(RequestType::AppInfoPageIdx);
+
+        // Loop through all application pages and check if they are used
+        for app_page_id in 0..app.get_page_lst().len() as u32 {
+            // Calculate absolute flash page id
+            let flash_page_id = app_page_id + app_start_page_idx;
+
+            // Check if page is used
+            if app.get_page(app_page_id).is_none() {
+                println!(
+                    "Erasing unused [Page: {}/{}]",
+                    flash_page_id + 1,
+                    flash_num_pages
+                );
+
+                // Erase flash page
+                self.get_entry_mut(RequestType::FlashWriteErasePage)
+                    .exec(interface, flash_page_id)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn _check_app_crc<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+        app: &AppFirmware,
+    ) -> Result<(), Error> {
+        if !self.is_app_crc_valid(interface, app)? {
+            // Sometimes the CRC is not valid, because the new app needs less flash
+            // then the new one. If the unused flash is not cleared the CRC value will
+            // be wrong.
+            self._erase_unused_pages(interface, app)?;
+
+            // Check again if CRC is valid
+            if !self.is_app_crc_valid(interface, app)? {
+                // CRC still invalid throw error
+                return Err(Error::Error(format!(
+                    "CRC check failed! App-CRC: {:#010X} Device-App-CRC: {:#010X}",
+                    app.get_crc(),
+                    self.get_entry_value(RequestType::AppInfoCRCCalc)
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn _flash_app_crc<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+        crc_value: u32,
+    ) -> Result<(), Error> {
+        self.get_entry_mut(RequestType::FlashWriteAppCRC)
+            .exec(interface, crc_value)
     }
 }
 

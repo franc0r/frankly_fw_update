@@ -21,8 +21,8 @@ fn main() {
     let mut device = Device::new();
 
     // Create new serial interface
-    //let mut com = SerialInterface::open("/dev/ttyACM0", 115200).unwrap();
-    let mut com = CANInterface::open("can0").unwrap();
+    let mut com = SerialInterface::open("/dev/ttyACM0", 115200).unwrap();
+    //let mut com = CANInterface::open("can0").unwrap();
 
     device.init(&mut com).unwrap();
     println!("Device: {}", device);

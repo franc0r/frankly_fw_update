@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cell::Ref, fmt, rc::Rc};
 
 ///
 /// Flash Description Error
@@ -138,26 +138,6 @@ impl FlashDesc {
     // Getters ------------------------------------------------------------------------------------
 
     ///
-    /// Returns the number of sections in the flash memory.
-    ///
-    pub fn get_num_section(&self) -> usize {
-        self.section_lst.len()
-    }
-
-    ///
-    /// Returns the section with the given name
-    ///
-    pub fn get_section(&self, name: &String) -> Option<&FlashSection> {
-        for section in &self.section_lst {
-            if section.get_name() == name {
-                return Some(section);
-            }
-        }
-
-        None
-    }
-
-    ///
     /// Returns the start address of the flash memory.
     ///
     pub fn get_address(&self) -> u32 {
@@ -183,6 +163,78 @@ impl FlashDesc {
     ///
     pub fn get_num_pages(&self) -> u32 {
         self.size / self.page_size
+    }
+
+    ///
+    /// Returns the number of sections in the flash memory.
+    ///
+    pub fn get_num_section(&self) -> usize {
+        self.section_lst.len()
+    }
+
+    ///
+    /// Get section name list
+    ///
+    pub fn get_section_name_list(&self) -> Vec<String> {
+        let mut name_lst = Vec::new();
+
+        for section in &self.section_lst {
+            name_lst.push(section.get_name().clone());
+        }
+
+        name_lst
+    }
+
+    ///
+    /// Returns the start address of the section with the given name.
+    ///
+    pub fn get_section_address(&self, name: &str) -> Option<u32> {
+        match self._get_section(name) {
+            Some(section) => Some(section.get_address()),
+            None => None,
+        }
+    }
+
+    ///
+    /// Returns the size of the section with the given name.
+    ///
+    pub fn get_section_size(&self, name: &str) -> Option<u32> {
+        match self._get_section(name) {
+            Some(section) => Some(section.get_size()),
+            None => None,
+        }
+    }
+
+    ///
+    /// Returns the page id of the section with the given name.
+    ///
+    pub fn get_section_page_id(&self, name: &str) -> Option<u32> {
+        match self._get_section(name) {
+            Some(section) => Some(section.get_flash_page_id()),
+            None => None,
+        }
+    }
+
+    ///
+    /// Returns the number of pages of the section with the given name.
+    ///
+    pub fn get_section_num_pages(&self, name: &str) -> Option<u32> {
+        match self._get_section(name) {
+            Some(section) => Some(section.get_size() / self.page_size),
+            None => None,
+        }
+    }
+
+    // Private functions ---------------------------------------------------------------------------
+
+    fn _get_section(&self, name: &str) -> Option<&FlashSection> {
+        for section in &self.section_lst {
+            if section.get_name() == name {
+                return Some(section);
+            }
+        }
+
+        None
     }
 }
 
@@ -363,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn flash_desc_get_section() {
+    fn flash_desc_get_section_by_name() {
         let mut flash_desc = FlashDesc::new(0x08000000, 0x10000, 0x400);
 
         let name = String::from("test");
@@ -372,22 +424,92 @@ mod tests {
 
         flash_desc.add_section(&name, address, size).unwrap();
 
-        let section = flash_desc.get_section(&name).unwrap();
+        let result = flash_desc._get_section(&name);
 
-        assert_eq!(section.get_name(), &name);
-        assert_eq!(section.get_address(), address);
-        assert_eq!(section.get_size(), size);
-        assert_eq!(section.get_flash_page_id(), 0);
+        assert_eq!(result.is_some(), true);
+        assert_eq!(result.unwrap().get_name(), &name);
+        assert_eq!(result.unwrap().get_address(), address);
+        assert_eq!(result.unwrap().get_size(), size);
     }
 
     #[test]
-    fn flash_desc_get_section_none() {
-        let flash_desc = FlashDesc::new(0x08000000, 0x10000, 0x400);
+    fn flash_desc_get_section_by_name_none() {
+        let mut flash_desc = FlashDesc::new(0x08000000, 0x10000, 0x400);
 
         let name = String::from("test");
+        let address = 0x08000000;
+        let size = 0x1000;
 
-        let section = flash_desc.get_section(&name);
+        flash_desc.add_section(&name, address, size).unwrap();
 
-        assert_eq!(section.is_none(), true);
+        let name = String::from("test2");
+
+        let result = flash_desc._get_section(&name);
+
+        assert_eq!(result.is_none(), true);
+    }
+
+    #[test]
+    fn flash_desc_get_section_address_by_name() {
+        let mut flash_desc = FlashDesc::new(0x08000000, 0x10000, 0x400);
+
+        let name = String::from("test");
+        let address = 0x08000000;
+        let size = 0x1000;
+
+        flash_desc.add_section(&name, address, size).unwrap();
+
+        let result = flash_desc.get_section_address(&name);
+
+        assert_eq!(result.is_some(), true);
+        assert_eq!(result.unwrap(), address);
+    }
+
+    #[test]
+    fn flash_desc_get_section_size_by_name() {
+        let mut flash_desc = FlashDesc::new(0x08000000, 0x10000, 0x400);
+
+        let name = String::from("test");
+        let address = 0x08000000;
+        let size = 0x1000;
+
+        flash_desc.add_section(&name, address, size).unwrap();
+
+        let result = flash_desc.get_section_size(&name);
+
+        assert_eq!(result.is_some(), true);
+        assert_eq!(result.unwrap(), size);
+    }
+
+    #[test]
+    fn flash_desc_get_section_page_id_by_name() {
+        let mut flash_desc = FlashDesc::new(0x08000000, 0x10000, 0x400);
+
+        let name = String::from("test");
+        let address = 0x08000000;
+        let size = 0x1000;
+
+        flash_desc.add_section(&name, address, size).unwrap();
+
+        let result = flash_desc.get_section_page_id(&name);
+
+        assert_eq!(result.is_some(), true);
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn flash_desc_get_section_num_pages_by_name() {
+        let mut flash_desc = FlashDesc::new(0x08000000, 0x10000, 0x400);
+
+        let name = String::from("test");
+        let address = 0x08000000;
+        let size = 0x1000;
+
+        flash_desc.add_section(&name, address, size).unwrap();
+
+        let result = flash_desc.get_section_num_pages(&name);
+
+        assert_eq!(result.is_some(), true);
+        assert_eq!(result.unwrap(), 4);
     }
 }

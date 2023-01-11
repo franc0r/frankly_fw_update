@@ -104,70 +104,7 @@ impl Device {
         app_fw.append_firmware(fw_data)?;
 
         // Transmit all pages of the firmware to the device
-        let mut page_cnt = 1;
-        for app_page in app_fw.get_page_lst().iter() {
-            let flash_page_id = app_page.get_id() + flash_app_page_idx;
-
-            // Print info
-            println!(
-                "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
-                page_cnt,
-                app_fw.get_page_lst().len(),
-                flash_page_id + 1,
-                flash_num_pages,
-                app_page.get_address()
-            );
-
-            // Clear page buffer
-            self.get_entry_mut(RequestType::PageBufferClear)
-                .exec(interface, 0)?;
-
-            // Write bytes to page buffer
-            let fw_page_byte_lst = app_page.get_bytes();
-
-            // One word per message
-            for msg_idx in 0..((flash_page_size as usize) / 4) {
-                let byte_offset = msg_idx * 4;
-
-                // Create data
-                let msg_data = MsgData::from_array(&[
-                    fw_page_byte_lst[byte_offset],
-                    fw_page_byte_lst[byte_offset + 1],
-                    fw_page_byte_lst[byte_offset + 2],
-                    fw_page_byte_lst[byte_offset + 3],
-                ]);
-
-                // Calculate packet id
-                let packet_id = (msg_idx % 256) as u8;
-
-                // Write word to page buffer
-                self.get_entry_mut(RequestType::PageBufferWriteWord)
-                    .write_value(interface, packet_id, &msg_data)?;
-            }
-
-            // Read CRC value of page buffer from device
-            let page_dev_crc = self
-                .read_entry_value(interface, RequestType::PageBufferCalcCRC)?
-                .to_word();
-            let page_calc_crc = app_page.get_crc();
-
-            if page_dev_crc != page_calc_crc {
-                return Err(Error::Error(format!(
-                    "Page buffer CRC is invalid! Calc: {:#010X} Dev: {:#010X}!",
-                    page_calc_crc, page_dev_crc
-                )));
-            }
-
-            // Erase flash page
-            self.get_entry_mut(RequestType::FlashWriteErasePage)
-                .exec(interface, flash_page_id)?;
-
-            // Write page buffer to flash
-            self.get_entry_mut(RequestType::PageBufferWriteToFlash)
-                .exec(interface, flash_page_id)?;
-
-            page_cnt += 1;
-        }
+        self._flash_app_pages(interface, &app_fw, flash_app_page_idx)?;
 
         println!("Checking CRC");
         self._check_app_crc(interface, &app_fw)?;
@@ -258,6 +195,80 @@ impl Device {
         }
 
         return Ok(());
+    }
+
+    fn _flash_app_pages<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+        app: &AppFirmware,
+        flash_app_page_idx: u32,
+    ) -> Result<(), Error> {
+        let mut page_cnt = 1;
+        for app_page in app.get_page_lst().iter() {
+            let flash_page_id = app_page.get_id() + flash_app_page_idx;
+
+            // Print info
+            println!(
+                "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
+                page_cnt,
+                app.get_page_lst().len(),
+                flash_page_id + 1,
+                app.get_flash_num_pages(),
+                app_page.get_address()
+            );
+
+            // Clear page buffer
+            self.get_entry_mut(RequestType::PageBufferClear)
+                .exec(interface, 0)?;
+
+            // Write bytes to page buffer
+            let fw_page_byte_lst = app_page.get_bytes();
+
+            // One word per message
+            for msg_idx in 0..((app.get_flash_page_size() as usize) / 4) {
+                let byte_offset = msg_idx * 4;
+
+                // Create data
+                let msg_data = MsgData::from_array(&[
+                    fw_page_byte_lst[byte_offset],
+                    fw_page_byte_lst[byte_offset + 1],
+                    fw_page_byte_lst[byte_offset + 2],
+                    fw_page_byte_lst[byte_offset + 3],
+                ]);
+
+                // Calculate packet id
+                let packet_id = (msg_idx % 256) as u8;
+
+                // Write word to page buffer
+                self.get_entry_mut(RequestType::PageBufferWriteWord)
+                    .write_value(interface, packet_id, &msg_data)?;
+            }
+
+            // Read CRC value of page buffer from device
+            let page_dev_crc = self
+                .read_entry_value(interface, RequestType::PageBufferCalcCRC)?
+                .to_word();
+            let page_calc_crc = app_page.get_crc();
+
+            if page_dev_crc != page_calc_crc {
+                return Err(Error::Error(format!(
+                    "Page buffer CRC is invalid! Calc: {:#010X} Dev: {:#010X}!",
+                    page_calc_crc, page_dev_crc
+                )));
+            }
+
+            // Erase flash page
+            self.get_entry_mut(RequestType::FlashWriteErasePage)
+                .exec(interface, flash_page_id)?;
+
+            // Write page buffer to flash
+            self.get_entry_mut(RequestType::PageBufferWriteToFlash)
+                .exec(interface, flash_page_id)?;
+
+            page_cnt += 1;
+        }
+
+        Ok(())
     }
 
     fn _erase_unused_pages<T: ComInterface>(

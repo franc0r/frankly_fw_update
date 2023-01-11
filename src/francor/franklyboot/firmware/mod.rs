@@ -26,7 +26,7 @@ pub const FLASH_DFT_VALUE: u8 = 0xFF;
 ///
 pub struct AppFirmware {
     /// Flash start address (important address where app area starts)
-    flash_start_address: u32,
+    app_start_address: u32,
 
     /// Flash page size
     flash_page_size: u32,
@@ -45,9 +45,9 @@ impl AppFirmware {
     ///
     /// Create new empty firmware object
     ///
-    pub fn new(flash_start_address: u32, flash_page_size: u32, flash_num_pages: u32) -> Self {
+    pub fn new(app_start_address: u32, flash_page_size: u32, flash_num_pages: u32) -> Self {
         AppFirmware {
-            flash_start_address: flash_start_address,
+            app_start_address: app_start_address,
             flash_page_size: flash_page_size,
             flash_num_pages: flash_num_pages,
             page_lst: Vec::new(),
@@ -66,14 +66,14 @@ impl AppFirmware {
         // Iterate over every byte
         for byte_address in byte_address_lst {
             // Check if byte address is valid otherwise throw error
-            let byte_address_valid = byte_address >= self.flash_start_address;
+            let byte_address_valid = byte_address >= self.app_start_address;
             if !byte_address_valid {
                 return Err(Error::Error(format!("Firmware layout invalid! Byte address {:#010X} is out of range! (Min Address: {:#010X})", 
-                byte_address, self.flash_start_address)));
+                byte_address, self.app_start_address)));
             }
 
-            let page_id = (byte_address - self.flash_start_address) / self.flash_page_size;
-            let page_byte_idx = (byte_address - self.flash_start_address) % self.flash_page_size;
+            let page_id = (byte_address - self.app_start_address) / self.flash_page_size;
+            let page_byte_idx = (byte_address - self.app_start_address) % self.flash_page_size;
 
             // Check if page ID is valid otherwise throw error
             let page_id_valid = page_id < self.flash_num_pages;
@@ -91,7 +91,7 @@ impl AppFirmware {
                 None => {
                     self.page_lst.push(FlashPage::new(
                         page_id,
-                        self.flash_start_address + page_id * self.flash_page_size,
+                        self.app_start_address + page_id * self.flash_page_size,
                         vec![FLASH_DFT_VALUE; self.flash_page_size as usize],
                     ));
 
@@ -144,6 +144,27 @@ impl AppFirmware {
     ///
     pub fn get_page_lst(&self) -> &Vec<FlashPage> {
         &self.page_lst
+    }
+
+    ///
+    /// Get application start address
+    ///
+    pub fn get_app_start_address(&self) -> u32 {
+        self.app_start_address
+    }
+
+    ///
+    /// Get flash page size
+    ///
+    pub fn get_flash_page_size(&self) -> u32 {
+        self.flash_page_size
+    }
+
+    ///
+    /// Get flash num pages
+    ///
+    pub fn get_flash_num_pages(&self) -> u32 {
+        self.flash_num_pages
     }
 
     // Private Functions --------------------------------------------------------------------------

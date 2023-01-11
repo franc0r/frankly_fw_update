@@ -1,6 +1,6 @@
 use crate::francor::franklyboot::{
     com::{msg::MsgData, msg::RequestType, ComInterface},
-    device::{Entry, EntryType},
+    device::{Entry, EntryType, FlashDesc, FlashSection},
     firmware::{AppFirmware, FirmwareDataInterface},
     Error,
 };
@@ -15,6 +15,10 @@ use std::fmt;
 /// functions to read and write data from and to the device.
 ///
 pub struct Device {
+    // Flash description
+    flash_desc: Option<FlashDesc>,
+
+    /// Vector of all entries
     entries: Vec<Entry>,
 }
 
@@ -35,6 +39,7 @@ impl Device {
     /// Create a new device
     pub fn new() -> Self {
         let mut device = Self {
+            flash_desc: None,
             entries: Vec::new(),
         };
 
@@ -69,7 +74,42 @@ impl Device {
     ///
     /// This function reads all constant data from the device and stores it in the device struct.
     pub fn init<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
-        self._read_const_data(interface)
+        // Read constant data from device
+        self._read_const_data(interface)?;
+
+        // Get complete flash description
+        let flash_start = self.get_entry_value(RequestType::FlashInfoStartAddr);
+        let flash_page_size = self.get_entry_value(RequestType::FlashInfoPageSize);
+        let flash_num_pages = self.get_entry_value(RequestType::FlashInfoNumPages);
+        let flash_size = flash_page_size * flash_num_pages;
+        let flash_app_page_idx = self.get_entry_value(RequestType::AppInfoPageIdx);
+
+        // Calculate bootloader area
+        let bootloader_start = flash_start;
+        let bootloader_size = flash_app_page_idx * flash_page_size;
+
+        // Calculate application area
+        let app_start = flash_start + (flash_app_page_idx * flash_page_size);
+        let app_size = flash_size - bootloader_size;
+
+        // Create flash description
+        self.flash_desc = Some(FlashDesc::new(flash_start, flash_size, flash_page_size));
+
+        // Add bootloader section
+        self.flash_desc
+            .as_mut()
+            .unwrap()
+            .add_section("Bootloader", bootloader_start, bootloader_size)
+            .map_err(|e| Error::Error(format!("Failed to add bootloader section: {}", e)))?;
+
+        // Add application section
+        self.flash_desc
+            .as_mut()
+            .unwrap()
+            .add_section("Application", app_start, app_size)
+            .map_err(|e| Error::Error(format!("Failed to add application section: {}", e)))?;
+
+        Ok(())
     }
 
     pub fn flash<T: ComInterface, FWI: FirmwareDataInterface>(

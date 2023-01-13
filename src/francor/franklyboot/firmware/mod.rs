@@ -7,7 +7,7 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use std::collections::HashMap;
 const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
-use crate::francor::franklyboot::Error;
+use crate::francor::franklyboot::{device::FlashSection, Error};
 
 // Firmware Data Trait ----------------------------------------------------------------------------
 
@@ -50,6 +50,16 @@ impl AppFirmware {
             app_start_address: app_start_address,
             flash_page_size: flash_page_size,
             flash_num_pages: flash_num_pages,
+            page_lst: Vec::new(),
+            crc: 0,
+        }
+    }
+
+    pub fn from_section(section: &FlashSection) -> Self {
+        AppFirmware {
+            app_start_address: section.get_address(),
+            flash_page_size: section.get_page_size(),
+            flash_num_pages: section.get_num_pages(),
             page_lst: Vec::new(),
             crc: 0,
         }

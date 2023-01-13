@@ -1,4 +1,4 @@
-use socketcan::{CANFilter, CANFrame, CANSocket};
+use socketcan::{CANFrame, CANSocket};
 use std::time::Duration;
 
 use crate::francor::franklyboot::{

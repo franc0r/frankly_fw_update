@@ -1,6 +1,6 @@
 use crate::francor::franklyboot::{
     com::{msg::MsgData, msg::RequestType, ComInterface},
-    device::{Entry, EntryType, FlashDesc, FlashSection},
+    device::{Entry, EntryType, FlashDesc},
     firmware::{AppFirmware, FirmwareDataInterface},
     Error,
 };
@@ -16,7 +16,7 @@ use std::fmt;
 ///
 pub struct Device {
     // Flash description
-    flash_desc: Option<FlashDesc>,
+    flash_desc: FlashDesc,
 
     /// Vector of all entries
     entries: Vec<Entry>,
@@ -39,7 +39,7 @@ impl Device {
     /// Create a new device
     pub fn new() -> Self {
         let mut device = Self {
-            flash_desc: None,
+            flash_desc: FlashDesc::new(0, 0, 0),
             entries: Vec::new(),
         };
 
@@ -93,19 +93,15 @@ impl Device {
         let app_size = flash_size - bootloader_size;
 
         // Create flash description
-        self.flash_desc = Some(FlashDesc::new(flash_start, flash_size, flash_page_size));
+        self.flash_desc = FlashDesc::new(flash_start, flash_size, flash_page_size);
 
         // Add bootloader section
         self.flash_desc
-            .as_mut()
-            .unwrap()
             .add_section("Bootloader", bootloader_start, bootloader_size)
             .map_err(|e| Error::Error(format!("Failed to add bootloader section: {}", e)))?;
 
         // Add application section
         self.flash_desc
-            .as_mut()
-            .unwrap()
             .add_section("Application", app_start, app_size)
             .map_err(|e| Error::Error(format!("Failed to add application section: {}", e)))?;
 
@@ -118,15 +114,11 @@ impl Device {
         fwi: &FWI,
     ) -> Result<(), Error> {
         // Read necessary data to variables
-        let flash_start = self.get_entry_value(RequestType::FlashInfoStartAddr);
-        let flash_page_size = self.get_entry_value(RequestType::FlashInfoPageSize);
-        let flash_num_pages = self.get_entry_value(RequestType::FlashInfoNumPages);
-        let flash_app_page_idx = self.get_entry_value(RequestType::AppInfoPageIdx);
-        let flash_app_start = flash_start + (flash_app_page_idx * flash_page_size);
-        let flash_app_num_pages = flash_num_pages - flash_app_page_idx;
+        let app_section = self.flash_desc.get_section("Application").unwrap();
+
         let fw_data = fwi.get_firmware_data().unwrap();
         let fw_size = fw_data.len() as u32;
-        let fw_num_pages = (fw_size / flash_page_size) + 1;
+        let fw_num_pages = (fw_size / app_section.get_page_size()) + 1;
 
         // Print firmware information
         println!(
@@ -140,11 +132,11 @@ impl Device {
         // Check firmware size (max limit)
 
         // Create app firmware representation
-        let mut app_fw = AppFirmware::new(flash_app_start, flash_page_size, flash_app_num_pages);
+        let mut app_fw = AppFirmware::from_section(&app_section);
         app_fw.append_firmware(fw_data)?;
 
         // Transmit all pages of the firmware to the device
-        self._flash_app_pages(interface, &app_fw, flash_app_page_idx)?;
+        self._flash_app_pages(interface, &app_fw)?;
 
         println!("Checking CRC");
         self._check_app_crc(interface, &app_fw)?;
@@ -241,11 +233,11 @@ impl Device {
         &mut self,
         interface: &mut T,
         app: &AppFirmware,
-        flash_app_page_idx: u32,
     ) -> Result<(), Error> {
         let mut page_cnt = 1;
         for app_page in app.get_page_lst().iter() {
-            let flash_page_id = app_page.get_id() + flash_app_page_idx;
+            let app_section = self.flash_desc.get_section("Application").unwrap();
+            let flash_page_id = app_page.get_id() + app_section.get_flash_page_id();
 
             // Print info
             println!(
@@ -376,21 +368,14 @@ impl Device {
     }
 }
 
-// TODO -> Change timeout back to ERROR
-// Retry is handled within com trait!
-// If communication is not possible return error -> makes access easier
-
 // Tests ------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::francor::franklyboot::{
-        com::{
-            msg::{Msg, MsgData, ResultType},
-            ComSimulator,
-        },
-        firmware::hex_file::HexFile,
+    use crate::francor::franklyboot::com::{
+        msg::{Msg, MsgData, ResultType},
+        ComSimulator,
     };
 
     #[test]

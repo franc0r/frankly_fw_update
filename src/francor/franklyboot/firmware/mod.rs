@@ -1,13 +1,13 @@
 pub mod hex_file;
 
-mod flash_page;
-pub use flash_page::FlashPage;
-
 use crc::{Crc, CRC_32_ISO_HDLC};
 use std::collections::HashMap;
 const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
-use crate::francor::franklyboot::{device::FlashSection, Error};
+use crate::francor::franklyboot::{
+    flash::{FlashPage, FlashSection},
+    Error,
+};
 
 // Firmware Data Trait ----------------------------------------------------------------------------
 

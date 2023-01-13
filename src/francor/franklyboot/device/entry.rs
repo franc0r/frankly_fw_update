@@ -123,7 +123,10 @@ impl Entry {
     /// be read from the device only once and then buffered. If the entry is not a constant value
     /// the value will be read from the device every time this function is called.
     ///
-    pub fn read_value<T: ComInterface>(&mut self, interface: &mut T) -> Result<&MsgData, Error> {
+    pub fn read_value<'a, T: ComInterface>(
+        &mut self,
+        interface: &'a mut T,
+    ) -> Result<&MsgData, Error> {
         if self.entry_type.is_readable() {
             let read_const_value = self.entry_type.is_const() && self.value.is_none();
             let read_normal_value = self.entry_type.is_readable();
@@ -145,9 +148,9 @@ impl Entry {
     ///
     /// This function writes the value of the entry to the device. The entry must be of type RW.
     ///
-    pub fn write_value<T: ComInterface>(
+    pub fn write_value<'a, T: ComInterface>(
         &mut self,
-        interface: &mut T,
+        interface: &'a mut T,
         packet_id: u8,
         data: &MsgData,
     ) -> Result<(), Error> {
@@ -165,7 +168,11 @@ impl Entry {
     ///
     /// This function executes the entry. The entry must be of type CMD.
     ///
-    pub fn exec<T: ComInterface>(&mut self, interface: &mut T, argument: u32) -> Result<(), Error> {
+    pub fn exec<'a, T: ComInterface>(
+        &mut self,
+        interface: &'a mut T,
+        argument: u32,
+    ) -> Result<(), Error> {
         if self.entry_type.is_executable() {
             self._write_to_device(interface, 0, &MsgData::from_word(argument))
         } else {
@@ -178,7 +185,10 @@ impl Entry {
 
     // Private functions --------------------------------------------------------------------------
 
-    fn _read_from_device<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
+    fn _read_from_device<'a, T: ComInterface>(
+        &mut self,
+        interface: &'a mut T,
+    ) -> Result<(), Error> {
         let request = Msg::new_std_request(self.request_type);
 
         interface.send(&request)?;
@@ -190,9 +200,9 @@ impl Entry {
         Ok(())
     }
 
-    fn _write_to_device<T: ComInterface>(
+    fn _write_to_device<'a, T: ComInterface>(
         &mut self,
-        interface: &mut T,
+        interface: &'a mut T,
         packet_id: u8,
         data: &MsgData,
     ) -> Result<(), Error> {
@@ -206,6 +216,78 @@ impl Entry {
         self.value = Some(response.get_data().clone());
 
         Ok(())
+    }
+}
+
+// Entry List -------------------------------------------------------------------------------------
+
+pub struct EntryList {
+    /// Vector storing every entry
+    entries: Vec<Entry>,
+}
+
+impl EntryList {
+    pub fn new() -> EntryList {
+        EntryList {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, entry: Entry) {
+        self.entries.push(entry);
+    }
+
+    pub fn get_vec(&mut self) -> &mut Vec<Entry> {
+        &mut self.entries
+    }
+
+    pub fn get_entry(&self, request_type: RequestType) -> &Entry {
+        for entry in self.entries.iter() {
+            if *entry.get_request_type() == request_type {
+                return entry;
+            }
+        }
+
+        panic!("No entry found for request type: {:?}", request_type)
+    }
+
+    pub fn get_entry_mut(&mut self, request_type: RequestType) -> &mut Entry {
+        for entry in self.entries.iter_mut() {
+            if *entry.get_request_type() == request_type {
+                return entry;
+            }
+        }
+
+        panic!("No entry found for request type: {:?}", request_type);
+    }
+
+    /// Get entry value of request type
+    ///
+    /// This function returns the value of the entry of the given request type. If no entry is found,
+    /// the function panics.
+    pub fn get_entry_value(&self, request_type: RequestType) -> u32 {
+        for entry in self.entries.iter() {
+            if *entry.get_request_type() == request_type {
+                return entry.get_value().unwrap().to_word();
+            }
+        }
+
+        panic!("No entry found for {:#?}!", request_type);
+    }
+
+    /// Read entry value of request type
+    pub fn read_entry_value<T: ComInterface>(
+        &mut self,
+        interface: &mut T,
+        request_type: RequestType,
+    ) -> Result<&MsgData, Error> {
+        for entry in self.entries.iter_mut() {
+            if *entry.get_request_type() == request_type {
+                return entry.read_value(interface);
+            }
+        }
+
+        panic!("No entry found for {:#?}!", request_type);
     }
 }
 

@@ -289,6 +289,13 @@ impl FlashSection {
     pub fn get_flash_page_id(&self) -> u32 {
         self.flash_page_id
     }
+
+    ///
+    /// Returns a range which can be used for a for loop to iterate over all pages of the section.
+    ///
+    pub fn get_page_range(&self) -> std::ops::Range<u32> {
+        self.flash_page_id..self.flash_page_id + self.get_num_pages()
+    }
 }
 
 // Tests ------------------------------------------------------------------------------------------

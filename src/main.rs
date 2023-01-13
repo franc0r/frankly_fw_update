@@ -27,15 +27,12 @@ fn main() {
     device.init(&mut com).unwrap();
     println!("Device: {}", device);
 
+    //device.erase(&mut com).unwrap();
+
     // Open firmware file
     let firmware = HexFile::from_file("./tests/data/example_app_g431rb.hex").unwrap();
     //let firmware = HexFile::from_file("./tests/data/TestG431RBBlinky.hex").unwrap();
 
     // Flash firmware
-    match device.flash(&mut com, &firmware) {
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("{}", e);
-        }
-    }
+    device.flash(&mut com, &firmware).unwrap();
 }

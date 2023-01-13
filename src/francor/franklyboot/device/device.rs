@@ -109,6 +109,27 @@ impl Device {
         Ok(())
     }
 
+    /// Erase the application area
+    ///
+    /// This function erases the application area of the device.
+    ///
+    pub fn erase<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
+        let app_section = self.flash_desc.get_section("Application").unwrap();
+
+        for flash_page_id in app_section.get_page_range() {
+            // Erase flash page
+            self.get_entry_mut(RequestType::FlashWriteErasePage)
+                .exec(interface, flash_page_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// Flash a new firmware to the device
+    ///
+    /// This function flashes a new firmware to the device. It reads the firmware data from the
+    /// FirmwareDataInterface and writes it to the device.
+    ///
     pub fn flash<T: ComInterface, FWI: FirmwareDataInterface>(
         &mut self,
         interface: &mut T,

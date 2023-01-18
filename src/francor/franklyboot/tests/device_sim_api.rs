@@ -184,6 +184,16 @@ mod tests {
     use crate::francor::franklyboot::device::Device;
 
     #[test]
+    fn sim_dev_api_tests() {
+        sim_dev_api_get_device_count();
+        sim_dev_api_add_node();
+        sim_dev_api_add_same_node_id();
+        sim_dev_api_send_broadcast_msg();
+
+        sim_com_ping_network();
+        sim_com_init_devices();
+    }
+
     fn sim_dev_api_get_device_count() {
         let sim = DeviceSimAPI::new();
         sim.reset();
@@ -191,7 +201,6 @@ mod tests {
         assert_eq!(sim.get_device_count(), 0);
     }
 
-    #[test]
     fn sim_dev_api_add_node() {
         let sim = DeviceSimAPI::new();
         sim.reset();
@@ -201,7 +210,6 @@ mod tests {
         assert_eq!(sim.get_device_count(), 1);
     }
 
-    #[test]
     fn sim_dev_api_add_same_node_id() {
         let sim = DeviceSimAPI::new();
         sim.reset();
@@ -213,7 +221,6 @@ mod tests {
         assert_eq!(sim.get_device_count(), 1);
     }
 
-    #[test]
     fn sim_dev_api_send_broadcast_msg() {
         let sim = DeviceSimAPI::new();
         sim.reset();
@@ -238,7 +245,6 @@ mod tests {
         assert!(sim.get_broadcast_response_msg().is_none());
     }
 
-    #[test]
     fn sim_com_ping_network() {
         let sim_api = DeviceSimAPI::new();
         sim_api.reset();
@@ -252,7 +258,6 @@ mod tests {
         assert_eq!(node_id_lst[1], 23);
     }
 
-    #[test]
     fn sim_com_init_devices() {
         let sim_api = DeviceSimAPI::new();
         sim_api.reset();

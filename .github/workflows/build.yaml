@@ -13,11 +13,6 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       - name: Checkout Repository
         uses: actions/checkout@v3
-      - name: Checkout Frankly Bootloader Library
-        run: |
-          mkdir -p ../frankly-bootloader
-          git clone https://github.com/franc0r/frankly-bootloader.git ../frankly-bootloader
-          (cd ../frankly-bootloader && git checkout devel)
       - name: Build App
         run: cargo build
       - name: Run Tests for App

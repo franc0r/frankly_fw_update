@@ -5,8 +5,6 @@ pub mod device;
 pub mod firmware;
 pub mod flash;
 
-mod tests;
-
 use std::fmt;
 
 // Error ------------------------------------------------------------------------------------------

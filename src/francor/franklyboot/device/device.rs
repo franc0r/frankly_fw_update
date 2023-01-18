@@ -218,6 +218,36 @@ where
         Ok(app_crc == dev_crc)
     }
 
+    pub fn get_bootloader_version(&self) -> String {
+        let version = self
+            .entries
+            .get_entry(RequestType::DevInfoBootloaderVersion)
+            .get_value()
+            .unwrap();
+
+        let major = version.get_byte(0);
+        let minor = version.get_byte(1);
+        let patch = version.get_byte(2);
+
+        format!("{}.{}.{}", major, minor, patch)
+    }
+
+    pub fn get_device_info_vid(&self) -> u32 {
+        self.get_entry_value(RequestType::DevInfoVID)
+    }
+
+    pub fn get_device_info_pid(&self) -> u32 {
+        self.get_entry_value(RequestType::DevInfoPID)
+    }
+
+    pub fn get_device_info_prd(&self) -> u32 {
+        self.get_entry_value(RequestType::DevInfoPRD)
+    }
+
+    pub fn get_device_info_uid(&self) -> u32 {
+        self.get_entry_value(RequestType::DevInfoUID)
+    }
+
     // Private Functions --------------------------------------------------------------------------
 
     fn _add_entry(&mut self, entry_type: EntryType, request_type: RequestType) {

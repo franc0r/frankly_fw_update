@@ -1,6 +1,6 @@
 //use clap::{Arg, ArgAction, Command};
 use frankly_fw_update_cli::francor::franklyboot::{
-    com::{can::CANInterface, serial::SerialInterface},
+    com::{can::CANInterface, serial::SerialInterface, sim::SIMInterface},
     device::Device,
     firmware::hex_file::HexFile,
 };
@@ -48,4 +48,20 @@ pub fn run_serial_test() {
 fn main() {
     // run_can_test();
     run_serial_test();
+
+    // TODO: Implement sim device network to support com trait!
+    // Run tests on sim network
+}
+
+// Tests ------------------------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sim_net_ping() {
+        let node_lst = vec![1, 3, 31, 8];
+        SIMInterface::config_nodes(node_lst).unwrap();
+    }
 }

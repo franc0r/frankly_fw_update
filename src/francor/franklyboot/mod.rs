@@ -4,6 +4,7 @@ pub mod com;
 pub mod device;
 pub mod firmware;
 pub mod flash;
+pub mod utils;
 
 use std::fmt;
 

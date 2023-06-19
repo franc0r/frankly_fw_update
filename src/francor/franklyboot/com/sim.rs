@@ -1,14 +1,17 @@
-use std::time::Duration;
-
 use crate::francor::franklyboot::{
-    com::msg::{Msg, RequestType},
+    com::{
+        msg::{Msg, RequestType},
+        ComInterface, ComMode,
+    },
     utils::sim_api,
     Error,
 };
 
 // SIM Interface ----------------------------------------------------------------------------------
 
-pub struct SIMInterface;
+pub struct SIMInterface {
+    mode: ComMode,
+}
 
 impl SIMInterface {
     ///
@@ -55,6 +58,63 @@ impl SIMInterface {
         }
 
         Ok(node_id_lst)
+    }
+
+    ///
+    /// Opens sim interface
+    ///
+    /// This function opens the simulation interface. Port name is ignored.
+    ///
+    /// # Arguments
+    ///
+    /// * `port_name` - Port name of the interface - Ignored
+    pub fn open(_port_name: &str) -> Result<SIMInterface, Error> {
+        Ok(SIMInterface {
+            mode: ComMode::Broadcast,
+        })
+    }
+}
+
+impl ComInterface for SIMInterface {
+    fn set_mode(&mut self, mode: ComMode) -> Result<(), Error> {
+        self.mode = mode;
+        Ok(())
+    }
+
+    fn set_timeout(&mut self, timeout: std::time::Duration) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn get_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(0)
+    }
+
+    fn send(&mut self, msg: &Msg) -> Result<(), Error> {
+        match self.mode {
+            ComMode::Specific(node_id) => {
+                sim_api::send_node_msg(node_id, &msg.to_raw_data_array());
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn recv(&mut self) -> Result<Msg, Error> {
+        match self.mode {
+            ComMode::Specific(node_id) => match sim_api::get_node_response_msg(node_id) {
+                Some(msg_raw) => {
+                    let response = Msg::from_raw_data_array(&msg_raw);
+                    return Ok(response);
+                }
+                None => {
+                    return Err(Error::ComNoResponse);
+                }
+            },
+            _ => {}
+        }
+
+        return Err(Error::Error("Mode not supported!".to_string()));
     }
 }
 

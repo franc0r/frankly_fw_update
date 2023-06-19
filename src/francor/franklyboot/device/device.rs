@@ -34,10 +34,11 @@ where
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "VID: {:#010X} | PID: {:#010X} | PRD: {:#010X}",
+            "VID: {:#010X} | PID: {:#010X} | PRD: {:#010X} | UID: {:#010X}",
             self.entries.get_entry_value(RequestType::DevInfoVID),
             self.entries.get_entry_value(RequestType::DevInfoPID),
-            self.entries.get_entry_value(RequestType::DevInfoPRD)
+            self.entries.get_entry_value(RequestType::DevInfoPRD),
+            self.entries.get_entry_value(RequestType::DevInfoUID),
         )
     }
 }

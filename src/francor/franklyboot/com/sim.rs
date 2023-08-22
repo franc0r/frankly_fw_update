@@ -81,7 +81,7 @@ impl ComInterface for SIMInterface {
         Ok(())
     }
 
-    fn set_timeout(&mut self, timeout: std::time::Duration) -> Result<(), Error> {
+    fn set_timeout(&mut self, _timeout: std::time::Duration) -> Result<(), Error> {
         Ok(())
     }
 

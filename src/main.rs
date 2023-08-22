@@ -33,6 +33,43 @@ pub fn search_for_devices(interface_type: InterfaceType, interface_name: &String
     }
 }
 
+pub fn erase_device(interface_type: InterfaceType, interface_name: &String, node: u8) {
+    match interface_type {
+        InterfaceType::Serial => {
+            println!(
+                "--> Erasing device on serial bus {} with node id {}",
+                interface_name, node
+            );
+        }
+        InterfaceType::CAN => {
+            println!(
+                "--> Erasing devices on CAN bus {} with node id {}",
+                interface_name, node
+            );
+        }
+        InterfaceType::Ethernet => {
+            println!(
+                "--> Erasing devices on Ethernet {} with node id {}",
+                interface_name, node
+            );
+        }
+        InterfaceType::Sim => {
+            println!(
+                "--> Erasing devices on simulated network with node id {}",
+                node
+            );
+
+            let node_lst = vec![1, 3, 31, 8];
+            SIMInterface::config_nodes(node_lst).unwrap();
+            let mut interface = SIMInterface::open("").unwrap();
+            interface.set_mode(ComMode::Specific(node)).unwrap();
+            let mut device = Device::new(interface);
+            device.init().unwrap();
+            device.erase().unwrap();
+        }
+    }
+}
+
 pub fn search_for_sim_devices() {
     let node_lst = vec![1, 3, 31, 8];
     SIMInterface::config_nodes(node_lst).unwrap();
@@ -98,6 +135,40 @@ fn main() {
                         .num_args(1),
                 ),
         )
+        .subcommand(
+            Command::new("erase")
+                .short_flag('e')
+                .long_flag("erase")
+                .about("Erases the application from the device")
+                .arg(
+                    Arg::new("type")
+                        .short('t')
+                        .long("type")
+                        .help("Interface type \"sim\", \"serial\", \"can\"")
+                        .required(true)
+                        .action(ArgAction::Set)
+                        .num_args(1),
+                )
+                .arg(
+                    Arg::new("interface")
+                        .short('i')
+                        .long("interface")
+                        .help("Interface name \"can0\", \"ttyACM0\", \"sim\"")
+                        .required(true)
+                        .action(ArgAction::Set)
+                        .num_args(1),
+                )
+                .arg(
+                    Arg::new("node")
+                        .short('n')
+                        .long("node")
+                        .help("Node ID: 0, 1, ..")
+                        .value_parser(clap::value_parser!(u8).range(0..))
+                        .required(true)
+                        .action(ArgAction::Set)
+                        .num_args(1),
+                ),
+        )
         .get_matches();
 
     println!("Frankly Firmware Update CLI (c) 2021 Martin Bauernschmitt - FRANCOR e.V.");
@@ -113,6 +184,21 @@ fn main() {
                 search_for_devices(InterfaceType::CAN, &interface_name);
             } else if interface_type == "sim" {
                 search_for_devices(InterfaceType::Sim, &interface_name);
+            } else {
+                println!("Unknown interface type {}", interface_type);
+            }
+        }
+        Some(("erase", erase_matches)) => {
+            let interface_name = erase_matches.get_one::<String>("interface").unwrap();
+            let interface_type = erase_matches.get_one::<String>("type").unwrap();
+            let node_id = *erase_matches.get_one::<u8>("node").unwrap();
+
+            if interface_type == "serial" {
+                erase_device(InterfaceType::Serial, &interface_name, node_id);
+            } else if interface_type == "can" {
+                erase_device(InterfaceType::CAN, &interface_name, node_id);
+            } else if interface_type == "sim" {
+                erase_device(InterfaceType::Sim, &interface_name, node_id);
             } else {
                 println!("Unknown interface type {}", interface_type);
             }

@@ -31,6 +31,25 @@ impl InterfaceType {
     }
 }
 
+pub fn connect_device<I>(
+    conn_params: &ComConnParams,
+    node_id: Option<u8>,
+) -> Result<Device<I>, Error>
+where
+    I: ComInterface,
+{
+    let mut interface = I::create()?;
+    interface.open(conn_params)?;
+    if node_id.is_some() {
+        interface.set_mode(ComMode::Specific(node_id.unwrap()))?;
+    }
+
+    let mut device = Device::new(interface);
+    device.init()?;
+
+    Ok(device)
+}
+
 pub fn search_for_devices<I>(conn_params: &ComConnParams)
 where
     I: ComInterface,
@@ -43,20 +62,49 @@ where
         };
 
         for node in node_lst {
-            let mut interface = I::create().unwrap();
-            interface.open(conn_params).unwrap();
-            interface.set_mode(ComMode::Specific(node)).unwrap();
-            let mut device = Device::new(interface);
-            device.init().unwrap();
+            let device = connect_device::<I>(conn_params, Some(node)).unwrap();
             println!("Device found[{:3}]: {}", node, device);
         }
     } else {
-        let mut interface = I::create().unwrap();
-        interface.open(conn_params).unwrap();
-        let mut device = Device::new(interface);
-        device.init().unwrap();
+        let device = connect_device::<I>(conn_params, None).unwrap();
         println!("Device found: {}", device);
     }
+}
+
+pub fn erase_device<I>(conn_params: &ComConnParams, node_id: u8)
+where
+    I: ComInterface,
+{
+    let node_id = {
+        if I::is_network() {
+            Some(node_id)
+        } else {
+            None
+        }
+    };
+
+    let mut device = connect_device::<I>(conn_params, node_id).unwrap();
+    println!("Device: {}", device);
+    device.erase().unwrap();
+}
+
+pub fn flash_device<I>(conn_params: &ComConnParams, node_id: u8, hex_file_path: &str)
+where
+    I: ComInterface,
+{
+    let node_id = {
+        if I::is_network() {
+            Some(node_id)
+        } else {
+            None
+        }
+    };
+
+    let mut device = connect_device::<I>(conn_params, node_id).unwrap();
+    println!("Device: {}", device);
+
+    let hex_file = HexFile::from_file(hex_file_path).unwrap();
+    device.flash(&hex_file).unwrap();
 }
 
 fn create_sim_devices() {
@@ -158,14 +206,50 @@ fn main() {
         }
         Some(("erase", erase_matches)) => {
             let interface_type_str = erase_matches.get_one::<String>("type").unwrap();
-            let _interface_type = InterfaceType::from_str(interface_type_str).unwrap();
-            let _node_id = *erase_matches.get_one::<u8>("node").unwrap();
+            let interface_type = InterfaceType::from_str(interface_type_str).unwrap();
+            let interface_name = erase_matches.get_one::<String>("interface").unwrap();
+            let node_id = *erase_matches.get_one::<u8>("node").unwrap();
+
+            match interface_type {
+                InterfaceType::Serial => erase_device::<SerialInterface>(
+                    &ComConnParams::for_serial_conn(interface_name, 115200),
+                    node_id,
+                ),
+                InterfaceType::CAN => erase_device::<CANInterface>(
+                    &ComConnParams::for_can_conn(interface_name),
+                    node_id,
+                ),
+                InterfaceType::Ethernet => println!("Ethernet not supported yet"),
+                InterfaceType::Sim => {
+                    erase_device::<SIMInterface>(&ComConnParams::for_sim_device(), node_id)
+                }
+            }
         }
         Some(("flash", flash_matches)) => {
             let interface_type_str = flash_matches.get_one::<String>("type").unwrap();
-            let _interface_type = InterfaceType::from_str(interface_type_str).unwrap();
-            let _node_id = *flash_matches.get_one::<u8>("node").unwrap();
-            let _hex_file_path = flash_matches.get_one::<String>("hex-file").unwrap();
+            let interface_type = InterfaceType::from_str(interface_type_str).unwrap();
+            let interface_name = flash_matches.get_one::<String>("interface").unwrap();
+            let node_id = *flash_matches.get_one::<u8>("node").unwrap();
+            let hex_file_path = flash_matches.get_one::<String>("hex-file").unwrap();
+
+            match interface_type {
+                InterfaceType::Serial => flash_device::<SerialInterface>(
+                    &ComConnParams::for_serial_conn(interface_name, 115200),
+                    node_id,
+                    &hex_file_path,
+                ),
+                InterfaceType::CAN => flash_device::<CANInterface>(
+                    &ComConnParams::for_can_conn(interface_name),
+                    node_id,
+                    &hex_file_path,
+                ),
+                InterfaceType::Ethernet => println!("Ethernet not supported yet"),
+                InterfaceType::Sim => flash_device::<SIMInterface>(
+                    &ComConnParams::for_sim_device(),
+                    node_id,
+                    &hex_file_path,
+                ),
+            }
         }
         _ => {
             println!("Unknown command");

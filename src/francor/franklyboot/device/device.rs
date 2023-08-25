@@ -38,7 +38,7 @@ where
             self.entries.get_entry_value(RequestType::DevInfoVID),
             self.entries.get_entry_value(RequestType::DevInfoPID),
             self.entries.get_entry_value(RequestType::DevInfoPRD),
-            self.entries.get_entry_value(RequestType::DevInfoUID),
+            self.get_device_info_uid()
         )
     }
 }
@@ -60,7 +60,10 @@ where
         device._add_entry(EntryType::Const, RequestType::DevInfoVID);
         device._add_entry(EntryType::Const, RequestType::DevInfoPID);
         device._add_entry(EntryType::Const, RequestType::DevInfoPRD);
-        device._add_entry(EntryType::Const, RequestType::DevInfoUID);
+        device._add_entry(EntryType::Const, RequestType::DevInfoUID1);
+        device._add_entry(EntryType::Const, RequestType::DevInfoUID2);
+        device._add_entry(EntryType::Const, RequestType::DevInfoUID3);
+        device._add_entry(EntryType::Const, RequestType::DevInfoUID4);
 
         device._add_entry(EntryType::Const, RequestType::FlashInfoStartAddr);
         device._add_entry(EntryType::Const, RequestType::FlashInfoPageSize);
@@ -245,8 +248,11 @@ where
         self.get_entry_value(RequestType::DevInfoPRD)
     }
 
-    pub fn get_device_info_uid(&self) -> u32 {
-        self.get_entry_value(RequestType::DevInfoUID)
+    pub fn get_device_info_uid(&self) -> u128 {
+        self.get_entry_value(RequestType::DevInfoUID1) as u128
+            | (self.get_entry_value(RequestType::DevInfoUID2) as u128) << 32
+            | (self.get_entry_value(RequestType::DevInfoUID3) as u128) << 64
+            | (self.get_entry_value(RequestType::DevInfoUID4) as u128) << 96
     }
 
     // Private Functions --------------------------------------------------------------------------
@@ -427,7 +433,10 @@ mod tests {
         assert_eq!(device.entries.get_entry_value(RequestType::DevInfoVID), 1);
         assert_eq!(device.entries.get_entry_value(RequestType::DevInfoPID), 2);
         assert_eq!(device.entries.get_entry_value(RequestType::DevInfoPRD), 3);
-        assert_eq!(device.entries.get_entry_value(RequestType::DevInfoUID), 4);
+        assert_eq!(device.entries.get_entry_value(RequestType::DevInfoUID1), 4);
+        assert_eq!(device.entries.get_entry_value(RequestType::DevInfoUID2), 5);
+        assert_eq!(device.entries.get_entry_value(RequestType::DevInfoUID3), 6);
+        assert_eq!(device.entries.get_entry_value(RequestType::DevInfoUID4), 7);
 
         assert_eq!(
             device
@@ -489,7 +498,25 @@ mod tests {
 
         assert!(device
             .entries
-            .get_entry(RequestType::DevInfoUID)
+            .get_entry(RequestType::DevInfoUID1)
+            .get_value()
+            .is_none());
+
+        assert!(device
+            .entries
+            .get_entry(RequestType::DevInfoUID2)
+            .get_value()
+            .is_none());
+
+        assert!(device
+            .entries
+            .get_entry(RequestType::DevInfoUID3)
+            .get_value()
+            .is_none());
+
+        assert!(device
+            .entries
+            .get_entry(RequestType::DevInfoUID4)
             .get_value()
             .is_none());
 
@@ -566,10 +593,31 @@ mod tests {
         ));
 
         interface.add_response(Msg::new(
-            RequestType::DevInfoUID,
+            RequestType::DevInfoUID1,
             ResultType::Ok,
             0,
             &MsgData::from_word(0x00000004),
+        ));
+
+        interface.add_response(Msg::new(
+            RequestType::DevInfoUID2,
+            ResultType::Ok,
+            0,
+            &MsgData::from_word(0x00000005),
+        ));
+
+        interface.add_response(Msg::new(
+            RequestType::DevInfoUID3,
+            ResultType::Ok,
+            0,
+            &MsgData::from_word(0x00000006),
+        ));
+
+        interface.add_response(Msg::new(
+            RequestType::DevInfoUID4,
+            ResultType::Ok,
+            0,
+            &MsgData::from_word(0x00000007),
         ));
 
         interface.add_response(Msg::new(

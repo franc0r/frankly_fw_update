@@ -15,7 +15,12 @@ pub enum RequestType {
     DevInfoVID,               //< Reads the vendor id
     DevInfoPID,               //< Reads the product id
     DevInfoPRD,               //< Reads the production date
-    DevInfoUID,               //< Reads the device unique ID
+
+    /* 128-bit UID */
+    DevInfoUID1, //< Reads the device unique ID [0:31]
+    DevInfoUID2, //< Reads the device unique ID [32:63]
+    DevInfoUID3, //< Reads the device unique ID [64:95]
+    DevInfoUID4, //< Reads the device unique ID [96:127]
 
     /* Flash information */
     FlashInfoStartAddr, //< Get the start address of the flash area
@@ -53,7 +58,10 @@ impl RequestType {
             0x0103 => RequestType::DevInfoVID,
             0x0104 => RequestType::DevInfoPID,
             0x0105 => RequestType::DevInfoPRD,
-            0x0106 => RequestType::DevInfoUID,
+            0x0106 => RequestType::DevInfoUID1,
+            0x0107 => RequestType::DevInfoUID2,
+            0x0108 => RequestType::DevInfoUID3,
+            0x0109 => RequestType::DevInfoUID4,
             0x0201 => RequestType::FlashInfoStartAddr,
             0x0202 => RequestType::FlashInfoPageSize,
             0x0203 => RequestType::FlashInfoNumPages,
@@ -82,7 +90,10 @@ impl RequestType {
             RequestType::DevInfoVID => 0x0103,
             RequestType::DevInfoPID => 0x0104,
             RequestType::DevInfoPRD => 0x0105,
-            RequestType::DevInfoUID => 0x0106,
+            RequestType::DevInfoUID1 => 0x0106,
+            RequestType::DevInfoUID2 => 0x0107,
+            RequestType::DevInfoUID3 => 0x0108,
+            RequestType::DevInfoUID4 => 0x0109,
             RequestType::FlashInfoStartAddr => 0x0201,
             RequestType::FlashInfoPageSize => 0x0202,
             RequestType::FlashInfoNumPages => 0x0203,
@@ -431,7 +442,10 @@ mod tests {
         assert_eq!(RequestType::DevInfoVID.to_u16(), 0x0103);
         assert_eq!(RequestType::DevInfoPID.to_u16(), 0x0104);
         assert_eq!(RequestType::DevInfoPRD.to_u16(), 0x0105);
-        assert_eq!(RequestType::DevInfoUID.to_u16(), 0x0106);
+        assert_eq!(RequestType::DevInfoUID1.to_u16(), 0x0106);
+        assert_eq!(RequestType::DevInfoUID2.to_u16(), 0x0107);
+        assert_eq!(RequestType::DevInfoUID3.to_u16(), 0x0108);
+        assert_eq!(RequestType::DevInfoUID4.to_u16(), 0x0109);
         assert_eq!(RequestType::FlashInfoStartAddr.to_u16(), 0x0201);
         assert_eq!(RequestType::FlashInfoPageSize.to_u16(), 0x0202);
         assert_eq!(RequestType::FlashInfoNumPages.to_u16(), 0x0203);
@@ -464,7 +478,10 @@ mod tests {
         assert_eq!(RequestType::from_u16(0x0103), RequestType::DevInfoVID);
         assert_eq!(RequestType::from_u16(0x0104), RequestType::DevInfoPID);
         assert_eq!(RequestType::from_u16(0x0105), RequestType::DevInfoPRD);
-        assert_eq!(RequestType::from_u16(0x0106), RequestType::DevInfoUID);
+        assert_eq!(RequestType::from_u16(0x0106), RequestType::DevInfoUID1);
+        assert_eq!(RequestType::from_u16(0x0107), RequestType::DevInfoUID2);
+        assert_eq!(RequestType::from_u16(0x0108), RequestType::DevInfoUID3);
+        assert_eq!(RequestType::from_u16(0x0109), RequestType::DevInfoUID4);
         assert_eq!(
             RequestType::from_u16(0x0201),
             RequestType::FlashInfoStartAddr
@@ -681,7 +698,7 @@ mod tests {
     #[test]
     fn msg_is_response_ok_msg_corrupted_request() {
         let request = Msg::new_std_request(RequestType::Ping);
-        let response = Msg::new(RequestType::DevInfoUID, ResultType::Ok, 0, &MsgData::new());
+        let response = Msg::new(RequestType::DevInfoUID1, ResultType::Ok, 0, &MsgData::new());
 
         match request.is_response_ok(&response) {
             Ok(_) => panic!("Response error expected!"),

@@ -126,7 +126,8 @@ mod tests {
         let node_lst = vec![1, 20, 3, 52];
         SIMInterface::config_nodes(node_lst.clone()).unwrap();
 
-        let mut interface = SIMInterface::open("").unwrap();
+        let mut interface = SIMInterface::create().unwrap();
+        interface.open(&ComConnParams::for_sim_device()).unwrap();
         let node_lst_found = interface.scan_network().unwrap();
 
         assert_eq!(node_lst, node_lst_found);

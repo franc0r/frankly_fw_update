@@ -1,8 +1,12 @@
 use clap::{Arg, ArgAction, Command};
 use frankly_fw_update_cli::francor::franklyboot::{
-    com::{can::CANInterface, serial::SerialInterface, sim::SIMInterface, ComInterface, ComMode},
+    com::{
+        can::CANInterface, serial::SerialInterface, sim::SIMInterface, ComConnParams, ComInterface,
+        ComMode,
+    },
     device::Device,
     firmware::hex_file::HexFile,
+    Error,
 };
 
 const SIM_NODE_LST: [u8; 4] = [1, 3, 31, 8];
@@ -14,114 +18,55 @@ pub enum InterfaceType {
     Ethernet,
 }
 
-pub fn search_for_devices(interface_type: InterfaceType, interface_name: &String) {
-    match interface_type {
-        InterfaceType::Serial => {
-            println!(
-                "--> Searching for devices on serial port {}",
-                interface_name
-            );
-            search_for_serial_devices(interface_name);
-        }
-        InterfaceType::CAN => {
-            println!("--> Searching for devices on CAN bus {}", interface_name);
-        }
-        InterfaceType::Ethernet => {
-            println!("--> Searching for devices on Ethernet {}", interface_name);
-        }
-        InterfaceType::Sim => {
-            println!("--> Searching for devices on simulated network");
-            search_for_sim_devices();
+// Convert from string to interface type
+impl InterfaceType {
+    fn from_str(s: &str) -> Result<Self, Error> {
+        match s {
+            "sim" => Ok(InterfaceType::Sim),
+            "serial" => Ok(InterfaceType::Serial),
+            "can" => Ok(InterfaceType::CAN),
+            "ethernet" => Ok(InterfaceType::Ethernet),
+            _ => Err(Error::Error(format!("Unknown interface type {}", s))),
         }
     }
 }
 
-pub fn erase_device(interface_type: InterfaceType, interface_name: &String, node: u8) {
-    match interface_type {
-        InterfaceType::Serial => {
-            println!(
-                "--> Erasing device on serial bus {} with node id {}",
-                interface_name, node
-            );
+pub fn search_for_devices<I>(conn_params: &ComConnParams)
+where
+    I: ComInterface,
+{
+    if I::is_network() {
+        let node_lst = {
+            let mut interface = I::create().unwrap();
+            interface.open(conn_params).unwrap();
+            interface.scan_network().unwrap()
+        };
 
-            let interface = SerialInterface::open(interface_name, 115200).unwrap();
-            let mut device = Device::new(interface);
-            device.init().unwrap();
-            device.erase().unwrap();
-        }
-        InterfaceType::CAN => {
-            println!(
-                "--> Erasing devices on CAN bus {} with node id {}",
-                interface_name, node
-            );
-        }
-        InterfaceType::Ethernet => {
-            println!(
-                "--> Erasing devices on Ethernet {} with node id {}",
-                interface_name, node
-            );
-        }
-        InterfaceType::Sim => {
-            println!(
-                "--> Erasing devices on simulated network with node id {}",
-                node
-            );
-
-            let node_lst = SIM_NODE_LST.to_vec();
-            SIMInterface::config_nodes(node_lst).unwrap();
-            let mut interface = SIMInterface::open("").unwrap();
+        for node in node_lst {
+            let mut interface = I::create().unwrap();
+            interface.open(conn_params).unwrap();
             interface.set_mode(ComMode::Specific(node)).unwrap();
             let mut device = Device::new(interface);
             device.init().unwrap();
-            device.erase().unwrap();
+            println!("Device found[{:3}]: {}", node, device);
         }
-    }
-}
-
-pub fn search_for_sim_devices() {
-    let node_lst = SIM_NODE_LST.to_vec();
-    SIMInterface::config_nodes(node_lst).unwrap();
-    let node_lst = SIMInterface::ping_network().unwrap();
-
-    for node in node_lst {
-        let mut interface = SIMInterface::open("").unwrap();
-        interface.set_mode(ComMode::Specific(node)).unwrap();
+    } else {
+        let mut interface = I::create().unwrap();
+        interface.open(conn_params).unwrap();
         let mut device = Device::new(interface);
         device.init().unwrap();
-
-        println!("Device found[{:3}]: {}", node, device);
+        println!("Device found: {}", device);
     }
 }
 
-pub fn search_for_serial_devices(interface_name: &String) {
-    let interface = SerialInterface::open(interface_name, 115200).unwrap();
-    let mut device = Device::new(interface);
-    device.init().unwrap();
-
-    println!("Device found: {}", device);
-}
-
-pub fn run_can_test() {
-    let node_lst = CANInterface::ping_network("can0").unwrap();
-
-    println!("Found nodes: {:?}", node_lst);
-
-    let mut device = Device::new(CANInterface::open("can0").unwrap());
-    device.init().unwrap();
-    device.erase().unwrap();
-}
-
-pub fn run_serial_test() {
-    let mut device = Device::new(SerialInterface::open("/dev/ttyACM0", 115200).unwrap());
-    device.init().unwrap();
-    device.erase().unwrap();
-
-    device
-        .flash(&HexFile::from_file("./tests/data/example_app_g431rb.hex").unwrap())
-        .unwrap();
+fn create_sim_devices() {
+    let node_lst = SIM_NODE_LST.to_vec();
+    SIMInterface::config_nodes(node_lst).unwrap();
 }
 
 fn main() {
+    create_sim_devices();
+
     let type_arg = Arg::new("type")
         .short('t')
         .long("type")
@@ -192,96 +137,35 @@ fn main() {
 
     match matches.subcommand() {
         Some(("search", search_matches)) => {
+            let interface_type_str = search_matches.get_one::<String>("type").unwrap();
+            let interface_type = InterfaceType::from_str(&interface_type_str).unwrap();
             let interface_name = search_matches.get_one::<String>("interface").unwrap();
-            let interface_type = search_matches.get_one::<String>("type").unwrap();
 
-            if interface_type == "serial" {
-                search_for_devices(InterfaceType::Serial, &interface_name);
-            } else if interface_type == "can" {
-                search_for_devices(InterfaceType::CAN, &interface_name);
-            } else if interface_type == "sim" {
-                search_for_devices(InterfaceType::Sim, &interface_name);
-            } else {
-                println!("Unknown interface type {}", interface_type);
+            match interface_type {
+                InterfaceType::Serial => search_for_devices::<SerialInterface>(
+                    &ComConnParams::for_serial_conn(interface_name, 115200),
+                ),
+                InterfaceType::CAN => {
+                    search_for_devices::<CANInterface>(&ComConnParams::for_can_conn(interface_name))
+                }
+                InterfaceType::Ethernet => {
+                    println!("Ethernet not supported yet");
+                }
+                InterfaceType::Sim => {
+                    search_for_devices::<SIMInterface>(&ComConnParams::for_sim_device())
+                }
             }
         }
         Some(("erase", erase_matches)) => {
-            let interface_name = erase_matches.get_one::<String>("interface").unwrap();
-            let interface_type = erase_matches.get_one::<String>("type").unwrap();
-            let node_id = *erase_matches.get_one::<u8>("node").unwrap();
-
-            if interface_type == "serial" {
-                erase_device(InterfaceType::Serial, &interface_name, node_id);
-            } else if interface_type == "can" {
-                erase_device(InterfaceType::CAN, &interface_name, node_id);
-            } else if interface_type == "sim" {
-                erase_device(InterfaceType::Sim, &interface_name, node_id);
-            } else {
-                println!("Unknown interface type {}", interface_type);
-            }
+            let interface_type_str = erase_matches.get_one::<String>("type").unwrap();
+            let _interface_type = InterfaceType::from_str(interface_type_str).unwrap();
+            let _node_id = *erase_matches.get_one::<u8>("node").unwrap();
         }
         Some(("flash", flash_matches)) => {
-            let interface_name = flash_matches.get_one::<String>("interface").unwrap();
-            let interface_type = flash_matches.get_one::<String>("type").unwrap();
-            let node_id = *flash_matches.get_one::<u8>("node").unwrap();
-            let hex_file_path = flash_matches.get_one::<String>("hex-file").unwrap();
-
-            if interface_type == "serial" {
-                println!(
-                    "--> Flashing {} device on serial bus {} with node id {}",
-                    hex_file_path, interface_name, node_id
-                );
-
-                // Open interface
-                let interface = SerialInterface::open(interface_name, 115200).unwrap();
-
-                // Open hex file
-                let hex_file = HexFile::from_file(hex_file_path).unwrap();
-
-                // Create device
-                let mut device = Device::new(interface);
-
-                // Init device
-                device.init().unwrap();
-
-                // Flash device
-                device.flash(&hex_file).unwrap();
-            } else if interface_type == "can" {
-                println!(
-                    "--> Flashing {} devices on CAN bus {} with node id {}",
-                    hex_file_path, interface_name, node_id
-                );
-            } else if interface_type == "sim" {
-                // Create sim network
-                let node_lst = SIM_NODE_LST.to_vec();
-                SIMInterface::config_nodes(node_lst).unwrap();
-
-                // Open interface
-                let mut interface = SIMInterface::open("").unwrap();
-                interface.set_mode(ComMode::Specific(node_id)).unwrap();
-
-                // Open hex file
-                let hex_file = HexFile::from_file(hex_file_path).unwrap();
-
-                // Create device
-                let mut device = Device::new(interface);
-
-                // Init device
-                device.init().unwrap();
-
-                // Erase device
-                device.erase().unwrap();
-
-                // Flash device
-                device.flash(&hex_file).unwrap();
-
-                println!(
-                    "--> Flashing {} devices on simulated network with node id {}",
-                    hex_file_path, node_id
-                );
-            } else {
-                println!("Unknown interface type {}", interface_type);
-            }
+            let interface_type_str = flash_matches.get_one::<String>("type").unwrap();
+            let _interface_type = InterfaceType::from_str(interface_type_str).unwrap();
+            let _node_id = *flash_matches.get_one::<u8>("node").unwrap();
+            let _hex_file_path = flash_matches.get_one::<String>("hex-file").unwrap();
         }
         _ => {
             println!("Unknown command");

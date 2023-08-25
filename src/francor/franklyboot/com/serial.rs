@@ -2,7 +2,7 @@ use serialport::SerialPort;
 use std::time::Duration;
 
 use crate::francor::franklyboot::{
-    com::{msg::Msg, ComInterface, ComMode},
+    com::{msg::Msg, ComConnParams, ComInterface, ComMode},
     Error,
 };
 
@@ -17,48 +17,62 @@ pub const RX_TIMEOUT: std::time::Duration = Duration::from_millis(500);
 ///
 pub struct SerialInterface {
     /// Serial port interface trait
-    port: Box<dyn SerialPort>,
+    port: Option<Box<dyn SerialPort>>,
 
     /// Timeout for receiving messages
     timeout: Duration,
 }
 
-impl SerialInterface {
-    ///
-    /// Open serial port
-    ///
-    /// This function opens the serial port with the given name and the given baud rate.
-    ///
-    /// # Arguments
-    ///
-    /// * `port_name` - Name of the serial port
-    /// * `baud_rate` - Baud rate of the serial port
-    ///
-    pub fn open(port_name: &str, baud_rate: u32) -> Result<SerialInterface, String> {
-        let port = serialport::new(port_name, baud_rate)
-            .timeout(RX_TIMEOUT)
-            .open()
-            .map_err(|e| format!("Failed to open serial port: {}", e))?;
-
+impl ComInterface for SerialInterface {
+    fn create() -> Result<Self, Error> {
         Ok(SerialInterface {
-            port,
+            port: None,
             timeout: RX_TIMEOUT,
         })
     }
-}
 
-impl ComInterface for SerialInterface {
+    fn open(&mut self, params: &ComConnParams) -> Result<(), Error> {
+        if params.name.is_none() {
+            return Err(Error::Error(format!("Serial port name not set!")));
+        }
+
+        if params.baud_rate.is_none() {
+            return Err(Error::Error(format!("Serial port baud rate not set!")));
+        }
+
+        let port = serialport::new(params.name.clone().unwrap(), params.baud_rate.unwrap())
+            .timeout(RX_TIMEOUT)
+            .open()
+            .map_err(|e| Error::Error(format!("Failed to open serial port: {}", e)))?;
+
+        self.port = Some(port);
+
+        Ok(())
+    }
+
+    fn is_network() -> bool {
+        false
+    }
+
+    fn scan_network(&mut self) -> Result<Vec<u8>, Error> {
+        Err(Error::NotSupported)
+    }
+
     fn set_mode(&mut self, _mode: ComMode) -> Result<(), Error> {
         Err(Error::NotSupported)
     }
 
     fn set_timeout(&mut self, timeout: std::time::Duration) -> Result<(), Error> {
-        match self.port.set_timeout(timeout) {
-            Ok(_) => {
+        match self.port.as_mut() {
+            Some(port) => {
+                port.set_timeout(timeout)
+                    .map_err(|e| Error::Error(format!("Failed to set timeout: {}", e)))?;
                 self.timeout = timeout;
-                Ok(())
+                return Ok(());
             }
-            Err(e) => Err(Error::Error(format!("Failed to set timeout: {}", e))),
+            None => {
+                return Err(Error::Error(format!("Serial port not open!")));
+            }
         }
     }
 
@@ -67,21 +81,35 @@ impl ComInterface for SerialInterface {
     }
 
     fn send(&mut self, msg: &Msg) -> Result<(), Error> {
-        self.port
-            .clear(serialport::ClearBuffer::All)
-            .map_err(|e| Error::Error(format!("Failed to clear serial port buffers! {}", e)))?;
-        self.port
-            .write_all(&msg.to_raw_data_array())
-            .map_err(|e| Error::Error(format!("Failed to write to serial port: {}", e)))?;
-        Ok(())
+        match self.port.as_mut() {
+            Some(port) => {
+                port.clear(serialport::ClearBuffer::All).map_err(|e| {
+                    Error::Error(format!("Failed to clear serial port buffers! {}", e))
+                })?;
+
+                port.write_all(&msg.to_raw_data_array())
+                    .map_err(|e| Error::Error(format!("Failed to write to serial port: {}", e)))?;
+
+                return Ok(());
+            }
+            None => {
+                return Err(Error::Error(format!("Serial port not open!")));
+            }
+        }
     }
 
     fn recv(&mut self) -> Result<Msg, Error> {
-        let mut data = [0u8; 8];
-        self.port
-            .read_exact(&mut data)
-            .map_err(|e| Error::Error(format!("Failed to read from serial port: {}", e)))?;
+        match self.port.as_mut() {
+            Some(port) => {
+                let mut data = [0u8; 8];
+                port.read_exact(&mut data)
+                    .map_err(|e| Error::Error(format!("Failed to read from serial port: {}", e)))?;
 
-        Ok(Msg::from_raw_data_array(&data))
+                return Ok(Msg::from_raw_data_array(&data));
+            }
+            None => {
+                return Err(Error::Error(format!("Serial port not open!")));
+            }
+        }
     }
 }

@@ -6,6 +6,43 @@ pub mod sim;
 use crate::francor::franklyboot::{com::msg::Msg, Error};
 use std::collections::VecDeque;
 
+// ComConParams -----------------------------------------------------------------------------------
+
+/// Communication connection parameter
+///
+/// This structure represents the connection parameters for the communication interface.
+///
+pub struct ComConnParams {
+    name: Option<String>,
+    baud_rate: Option<u32>,
+}
+
+impl ComConnParams {
+    pub fn new() -> Self {
+        ComConnParams {
+            name: None,
+            baud_rate: None,
+        }
+    }
+
+    pub fn for_sim_device() -> Self {
+        ComConnParams::new()
+    }
+
+    pub fn for_serial_conn(name: &String, baud_rate: u32) -> Self {
+        let mut params = ComConnParams::new();
+        params.name = Some(name.clone());
+        params.baud_rate = Some(baud_rate);
+        params
+    }
+
+    pub fn for_can_conn(name: &String) -> Self {
+        let mut params = ComConnParams::new();
+        params.name = Some(name.clone());
+        params
+    }
+}
+
 // ComMode ----------------------------------------------------------------------------------------
 
 /// Communication mode
@@ -28,7 +65,24 @@ pub enum ComMode {
 /// Standarized interface trait which every communication interface must implement.
 /// It enables the communication with the devices and handles the low layer com protocol.
 ///
-pub trait ComInterface {
+pub trait ComInterface: Sized {
+    fn create() -> Result<Self, Error>;
+
+    /// Opens the connection
+    ///
+    /// Opens the connection to the device with the given parameters
+    ///
+    fn open(&mut self, params: &ComConnParams) -> Result<(), Error>;
+
+    /// Checks if the interface is a multi device network
+    ///
+    fn is_network() -> bool;
+
+    /// Scans the network for devices and returns the node ids
+    /// of detected devices
+    ///
+    fn scan_network(&mut self) -> Result<Vec<u8>, Error>;
+
     /// Set the communication mode (broadcast or specific node)
     ///
     /// Set the communication mode to:
@@ -87,6 +141,22 @@ impl ComSimulator {
 }
 
 impl ComInterface for ComSimulator {
+    fn create() -> Result<Self, Error> {
+        Err(Error::NotSupported)
+    }
+
+    fn open(&mut self, _params: &ComConnParams) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn is_network() -> bool {
+        false
+    }
+
+    fn scan_network(&mut self) -> Result<Vec<u8>, Error> {
+        Err(Error::NotSupported)
+    }
+
     fn set_mode(&mut self, _mode: ComMode) -> Result<(), Error> {
         Ok(())
     }

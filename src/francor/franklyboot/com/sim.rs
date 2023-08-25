@@ -1,7 +1,7 @@
 use crate::francor::franklyboot::{
     com::{
         msg::{Msg, RequestType},
-        ComInterface, ComMode,
+        ComConnParams, ComInterface, ComMode,
     },
     utils::sim_api,
     Error,
@@ -31,11 +31,26 @@ impl SIMInterface {
 
         Ok(())
     }
+}
 
-    ///
-    /// Pings the network to search for nodes and returns a list of found nodes
-    ///
-    pub fn ping_network() -> Result<Vec<u8>, Error> {
+impl ComInterface for SIMInterface {
+    fn create() -> Result<Self, Error> {
+        Ok(SIMInterface {
+            mode: ComMode::Broadcast,
+        })
+    }
+
+    fn open(&mut self, _params: &ComConnParams) -> Result<(), Error> {
+        self.mode = ComMode::Broadcast;
+
+        Ok(())
+    }
+
+    fn is_network() -> bool {
+        true
+    }
+
+    fn scan_network(&mut self) -> Result<Vec<u8>, Error> {
         // Send ping
         let ping_request = Msg::new_std_request(RequestType::Ping);
         sim_api::send_broadcast_msg(&ping_request.to_raw_data_array());
@@ -60,22 +75,6 @@ impl SIMInterface {
         Ok(node_id_lst)
     }
 
-    ///
-    /// Opens sim interface
-    ///
-    /// This function opens the simulation interface. Port name is ignored.
-    ///
-    /// # Arguments
-    ///
-    /// * `port_name` - Port name of the interface - Ignored
-    pub fn open(_port_name: &str) -> Result<SIMInterface, Error> {
-        Ok(SIMInterface {
-            mode: ComMode::Broadcast,
-        })
-    }
-}
-
-impl ComInterface for SIMInterface {
     fn set_mode(&mut self, mode: ComMode) -> Result<(), Error> {
         self.mode = mode;
         Ok(())
@@ -127,7 +126,8 @@ mod tests {
         let node_lst = vec![1, 20, 3, 52];
         SIMInterface::config_nodes(node_lst.clone()).unwrap();
 
-        let node_lst_found = SIMInterface::ping_network().unwrap();
+        let mut interface = SIMInterface::open("").unwrap();
+        let node_lst_found = interface.scan_network().unwrap();
 
         assert_eq!(node_lst, node_lst_found);
     }

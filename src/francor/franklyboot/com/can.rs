@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::francor::franklyboot::{
     com::{
         msg::{Msg, RequestType},
-        ComInterface, ComMode,
+        ComConnParams, ComInterface, ComMode,
     },
     Error,
 };
@@ -23,87 +23,13 @@ pub const CAN_RX_TIMEOUT: std::time::Duration = Duration::from_millis(500);
 ///
 pub struct CANInterface {
     /// CAN socket
-    socket: CANSocket,
+    socket: Option<CANSocket>,
 
     /// Timeout for receiving messages
     timeout: Duration,
 }
 
 impl CANInterface {
-    ///
-    /// Open serial port
-    ///
-    /// This function opens the serial port with the given name and the given baud rate.
-    ///
-    /// # Arguments
-    ///
-    /// * `port_name` - Name of the serial port
-    ///
-    pub fn open(port_name: &str) -> Result<CANInterface, Error> {
-        let socket = CANSocket::open(port_name);
-        match socket {
-            Ok(socket) => {
-                socket
-                    .set_read_timeout(CAN_RX_TIMEOUT)
-                    .expect("Failed to set rx timeout!");
-
-                // clear rx messages
-                loop {
-                    match socket.read_frame() {
-                        Ok(_) => {}
-                        Err(_) => break,
-                    }
-                }
-
-                Ok(CANInterface {
-                    socket,
-                    timeout: CAN_RX_TIMEOUT,
-                })
-            }
-            Err(e) => Err(Error::Error(format!(
-                "Error opening socket for \"{}\": \"{}\"",
-                port_name, e
-            ))),
-        }
-    }
-
-    ///
-    /// Opens an interface and sends a ping to the network to search for devices
-    ///
-    /// Opens an interface and sends a broadcast ping message to the network.
-    /// All responding nodes will be added to the result vector.
-    pub fn ping_network(port_name: &str) -> Result<Vec<u8>, Error> {
-        // Open interface
-        let mut interface = Self::open(port_name)?;
-
-        // Config interface to broadcast
-        interface.set_mode(ComMode::Broadcast)?;
-
-        // Send ping
-        let ping_request = Msg::new_std_request(RequestType::Ping);
-        interface.send(&ping_request)?;
-
-        // Receive until no new response
-        // Store node ids
-        let mut node_id_lst = Vec::new();
-        loop {
-            match interface.socket.read_frame() {
-                Ok(can_frame) => {
-                    let response = Self::can_frame_to_msg(&can_frame);
-                    if ping_request.is_response_ok(&response).is_ok() {
-                        let node_id = ((can_frame.id() - CAN_BASE_ID) / 2) as u8;
-                        node_id_lst.push(node_id);
-                    }
-                }
-                Err(_e) => {
-                    break;
-                }
-            }
-        }
-
-        Ok(node_id_lst)
-    }
-
     // Private functions --------------------------------------------------------------------------
 
     fn can_frame_to_msg(can_frame: &CANFrame) -> Msg {
@@ -123,39 +49,122 @@ impl CANInterface {
 }
 
 impl ComInterface for CANInterface {
-    fn set_mode(&mut self, mode: ComMode) -> Result<(), Error> {
-        let mut can_rx_msg_id = 0;
-        let mut can_rx_msg_mask = 0;
+    fn create() -> Result<Self, Error> {
+        Ok(CANInterface {
+            socket: None,
+            timeout: CAN_RX_TIMEOUT,
+        })
+    }
 
-        // Set ID and MASK only if no broadcast is used
-        match mode {
-            ComMode::Specific(node_id) => {
-                can_rx_msg_id = CAN_BASE_ID + node_id as u32 * 2 + 1;
-                can_rx_msg_mask = 0x7FF;
-            }
-            _ => {}
+    fn open(&mut self, params: &ComConnParams) -> Result<(), Error> {
+        if params.name.is_none() {
+            return Err(Error::Error(format!("Serial port name not set!")));
         }
 
-        // Set filter
-        match CANFilter::new(can_rx_msg_id, can_rx_msg_mask) {
-            Ok(filter) => match self.socket.set_filter(&[filter]) {
-                Ok(_) => Ok(()),
-                Err(e) => Err(Error::Error(format!("Failed to set filter: {}", e))),
-            },
-            Err(e) => {
-                return Err(Error::Error(format!("Error config filter: \"{}\"", e)));
+        let socket = CANSocket::open(params.name.clone().unwrap().as_str());
+        match socket {
+            Ok(socket) => {
+                socket
+                    .set_read_timeout(self.timeout)
+                    .map_err(|_e| Error::Error(format!("Failed to set rx timeout!")))?;
+
+                // clear rx messages
+                loop {
+                    match socket.read_frame() {
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+
+                self.socket = Some(socket);
+
+                Ok(())
             }
+            Err(e) => Err(Error::Error(format!(
+                "Error opening socket for \"{}\": \"{}\"",
+                params.name.clone().unwrap(),
+                e
+            ))),
+        }
+    }
+
+    fn is_network() -> bool {
+        true
+    }
+
+    fn scan_network(&mut self) -> Result<Vec<u8>, Error> {
+        // Config interface to broadcast
+        self.set_mode(ComMode::Broadcast)?;
+
+        // Send ping
+        let ping_request = Msg::new_std_request(RequestType::Ping);
+        self.send(&ping_request)?;
+
+        match self.socket.as_mut() {
+            Some(socket) => {
+                // Receive until no new response
+                // Store node ids
+                let mut node_id_lst = Vec::new();
+                loop {
+                    match socket.read_frame() {
+                        Ok(can_frame) => {
+                            let response = Self::can_frame_to_msg(&can_frame);
+                            if ping_request.is_response_ok(&response).is_ok() {
+                                let node_id = ((can_frame.id() - CAN_BASE_ID) / 2) as u8;
+                                node_id_lst.push(node_id);
+                            }
+                        }
+                        Err(_e) => {
+                            break;
+                        }
+                    }
+                }
+
+                Ok(node_id_lst)
+            }
+            None => Err(Error::Error(format!("CAN socket not open!"))),
+        }
+    }
+
+    fn set_mode(&mut self, mode: ComMode) -> Result<(), Error> {
+        match self.socket.as_mut() {
+            Some(socket) => {
+                let mut can_rx_msg_id = 0;
+                let mut can_rx_msg_mask = 0;
+
+                // Set ID and MASK only if no broadcast is used
+                match mode {
+                    ComMode::Specific(node_id) => {
+                        can_rx_msg_id = CAN_BASE_ID + node_id as u32 * 2 + 1;
+                        can_rx_msg_mask = 0x7FF;
+                    }
+                    _ => {}
+                }
+
+                // Set filter
+                match CANFilter::new(can_rx_msg_id, can_rx_msg_mask) {
+                    Ok(filter) => match socket.set_filter(&[filter]) {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(Error::Error(format!("Failed to set filter: {}", e))),
+                    },
+                    Err(e) => Err(Error::Error(format!("Error config filter: \"{}\"", e))),
+                }
+            }
+            None => Err(Error::Error(format!("CAN socket not open!"))),
         }
     }
 
     fn set_timeout(&mut self, timeout: std::time::Duration) -> Result<(), Error> {
-        match self.socket.set_read_timeout(timeout) {
-            Ok(_) => {
-                self.timeout = timeout;
+        match self.socket.as_mut() {
+            Some(socket) => match socket.set_read_timeout(timeout) {
+                Ok(_) => {
+                    self.timeout = timeout;
 
-                Ok(())
-            }
-            Err(e) => Err(Error::Error(format!("Failed to set timeout: {}", e))),
+                    Ok(())
+                }
+                Err(e) => Err(Error::Error(format!("Failed to set timeout: {}", e))),
+            },
+            None => Err(Error::Error(format!("CAN socket not open!"))),
         }
     }
 
@@ -164,25 +173,37 @@ impl ComInterface for CANInterface {
     }
 
     fn send(&mut self, msg: &Msg) -> Result<(), Error> {
-        let frame = CANFrame::new(CAN_BROADCAST_ID, &msg.to_raw_data_array(), false, false)
-            .map_err(|e| Error::Error(format!("{}", e)))?;
+        match self.socket.as_mut() {
+            Some(socket) => {
+                let frame = CANFrame::new(CAN_BROADCAST_ID, &msg.to_raw_data_array(), false, false)
+                    .map_err(|e| Error::Error(format!("{}", e)))?;
 
-        self.socket
-            .write_frame(&frame)
-            .map_err(|e| Error::Error(format!("{}", e)))?;
+                socket
+                    .write_frame(&frame)
+                    .map_err(|e| Error::Error(format!("{}", e)))?;
 
-        Ok(())
+                Ok(())
+            }
+            None => Err(Error::Error(format!("CAN socket not open!"))),
+        }
     }
 
     fn recv(&mut self) -> Result<Msg, Error> {
-        match self.socket.read_frame() {
-            Ok(frame) => {
-                return Ok(Self::can_frame_to_msg(&frame));
-            }
-            // Message timeout
-            Err(_) => {}
-        }
+        match self.socket.as_mut() {
+            Some(socket) => {
+                match socket.read_frame() {
+                    Ok(frame) => {
+                        return Ok(Self::can_frame_to_msg(&frame));
+                    }
+                    // Message timeout
+                    Err(_) => {}
+                }
 
-        return Err(Error::ComNoResponse);
+                return Err(Error::ComNoResponse);
+            }
+            None => {
+                return Err(Error::Error(format!("CAN socket not open!")));
+            }
+        }
     }
 }

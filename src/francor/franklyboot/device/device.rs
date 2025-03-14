@@ -81,6 +81,7 @@ where
         device._add_entry(EntryType::Cmd, RequestType::FlashWriteAppCRC);
 
         device._add_entry(EntryType::Cmd, RequestType::StartApp);
+        device._add_entry(EntryType::Cmd, RequestType::ResetDevice);
 
         device
     }
@@ -119,6 +120,20 @@ where
         self.flash_desc
             .add_section("Application", app_start, app_size)
             .map_err(|e| Error::Error(format!("Failed to add application section: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Reset the device
+    ///
+    /// This function resets the device.
+    ///
+    pub fn reset(&mut self) -> Result<(), Error> {
+        self.entries
+            .get_entry_mut(RequestType::ResetDevice)
+            .exec(&mut self.interface, 0)?;
+
+        println!("Reset device...");
 
         Ok(())
     }

@@ -92,6 +92,14 @@ fn main() {
                         .num_args(1),
                 ),
         )
+        .subcommand(
+            Command::new("reset")
+                .long_flag("reset")
+                .about("Reset device")
+                .arg(type_arg.clone())
+                .arg(interface_arg.clone())
+                .arg(node_arg.clone()),
+        )
         .get_matches();
 
     println!("Frankly Firmware Update CLI (c) 2023 Martin Bauernschmitt - FRANCOR e.V.");
@@ -170,6 +178,30 @@ fn main() {
                 ),
             }
         }
+        Some(("reset", reset_matches)) => {
+            let interface_type_str = reset_matches.get_one::<String>("type").unwrap();
+            let interface_type = InterfaceType::from_str(&interface_type_str).unwrap();
+            let interface_name = reset_matches.get_one::<String>("interface").unwrap();
+            let node_id = match reset_matches.get_one::<u8>("node") {
+                Some(v) => Some(*v),
+                None => None,
+            };
+
+            match interface_type {
+                InterfaceType::Serial => reset_device::<SerialInterface>(
+                    &ComConnParams::for_serial_conn(interface_name, 115200),
+                    node_id,
+                ),
+                InterfaceType::CAN => reset_device::<CANInterface>(
+                    &ComConnParams::for_can_conn(interface_name),
+                    node_id,
+                ),
+                InterfaceType::Ethernet => println!("Ethernet not supported yet"),
+                InterfaceType::Sim => {
+                    reset_device::<SIMInterface>(&ComConnParams::for_sim_device(), node_id)
+                }
+            }
+        }
         _ => {
             println!("Unknown command");
         }
@@ -214,6 +246,22 @@ where
         let device = connect_device::<I>(conn_params, None).unwrap();
         println!("Device found: {}", device);
     }
+}
+
+pub fn reset_device<I>(conn_params: &ComConnParams, node_id: Option<u8>)
+where
+    I: ComInterface,
+{
+    if I::is_network() {
+        if node_id.is_none() {
+            println!("Node ID required for multi device network interface! Specify with --node <node-id>");
+            return;
+        }
+    }
+
+    let mut device = connect_device::<I>(conn_params, node_id).unwrap();
+    println!("Device: {}", device);
+    device.reset().unwrap();
 }
 
 pub fn erase_device<I>(conn_params: &ComConnParams, node_id: Option<u8>)

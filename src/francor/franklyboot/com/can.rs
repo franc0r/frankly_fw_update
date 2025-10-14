@@ -1,4 +1,4 @@
-use socketcan::{CANFilter, CANFrame, CANSocket};
+use socketcan::{CanFilter, CanFrame, CanSocket, EmbeddedFrame, Frame, Socket, SocketOptions, StandardId};
 use std::time::Duration;
 
 use crate::francor::franklyboot::{
@@ -23,7 +23,7 @@ pub const CAN_RX_TIMEOUT: std::time::Duration = Duration::from_millis(500);
 ///
 pub struct CANInterface {
     /// CAN socket
-    socket: Option<CANSocket>,
+    socket: Option<CanSocket>,
 
     /// Timeout for receiving messages
     timeout: Duration,
@@ -32,19 +32,20 @@ pub struct CANInterface {
 impl CANInterface {
     // Private functions --------------------------------------------------------------------------
 
-    fn can_frame_to_msg(can_frame: &CANFrame) -> Msg {
-        let data = [
-            can_frame.data()[0],
-            can_frame.data()[1],
-            can_frame.data()[2],
-            can_frame.data()[3],
-            can_frame.data()[4],
-            can_frame.data()[5],
-            can_frame.data()[6],
-            can_frame.data()[7],
+    fn can_frame_to_msg(can_frame: &socketcan::frame::CanDataFrame) -> Msg {
+        let data = can_frame.data();
+        let msg_data = [
+            data[0],
+            data[1],
+            data[2],
+            data[3],
+            data[4],
+            data[5],
+            data[6],
+            data[7],
         ];
 
-        return Msg::from_raw_data_array(&data);
+        return Msg::from_raw_data_array(&msg_data);
     }
 }
 
@@ -61,11 +62,11 @@ impl ComInterface for CANInterface {
             return Err(Error::Error(format!("Serial port name not set!")));
         }
 
-        let socket = CANSocket::open(params.name.clone().unwrap().as_str());
+        let socket = CanSocket::open(params.name.clone().unwrap().as_str());
         match socket {
             Ok(socket) => {
                 socket
-                    .set_read_timeout(self.timeout)
+                    .set_read_timeout(Some(self.timeout))
                     .map_err(|_e| Error::Error(format!("Failed to set rx timeout!")))?;
 
                 // clear rx messages
@@ -107,11 +108,18 @@ impl ComInterface for CANInterface {
                 let mut node_id_lst = Vec::new();
                 loop {
                     match socket.read_frame() {
-                        Ok(can_frame) => {
-                            let response = Self::can_frame_to_msg(&can_frame);
-                            if ping_request.is_response_ok(&response).is_ok() {
-                                let node_id = ((can_frame.id() - CAN_BASE_ID) / 2) as u8;
-                                node_id_lst.push(node_id);
+                        Ok(frame) => {
+                            // Only process data frames
+                            match frame {
+                                CanFrame::Data(can_frame) => {
+                                    let response = Self::can_frame_to_msg(&can_frame);
+                                    if ping_request.is_response_ok(&response).is_ok() {
+                                        let raw_id = can_frame.raw_id();
+                                        let node_id = ((raw_id - CAN_BASE_ID) / 2) as u8;
+                                        node_id_lst.push(node_id);
+                                    }
+                                }
+                                _ => {} // Ignore non-data frames
                             }
                         }
                         Err(_e) => {
@@ -142,12 +150,10 @@ impl ComInterface for CANInterface {
                 }
 
                 // Set filter
-                match CANFilter::new(can_rx_msg_id, can_rx_msg_mask) {
-                    Ok(filter) => match socket.set_filter(&[filter]) {
-                        Ok(_) => Ok(()),
-                        Err(e) => Err(Error::Error(format!("Failed to set filter: {}", e))),
-                    },
-                    Err(e) => Err(Error::Error(format!("Error config filter: \"{}\"", e))),
+                let filter = CanFilter::new(can_rx_msg_id, can_rx_msg_mask);
+                match socket.set_filters(&[filter]) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(Error::Error(format!("Failed to set filter: {}", e))),
                 }
             }
             None => Err(Error::Error(format!("CAN socket not open!"))),
@@ -156,7 +162,7 @@ impl ComInterface for CANInterface {
 
     fn set_timeout(&mut self, timeout: std::time::Duration) -> Result<(), Error> {
         match self.socket.as_mut() {
-            Some(socket) => match socket.set_read_timeout(timeout) {
+            Some(socket) => match socket.set_read_timeout(Some(timeout)) {
                 Ok(_) => {
                     self.timeout = timeout;
 
@@ -175,8 +181,10 @@ impl ComInterface for CANInterface {
     fn send(&mut self, msg: &Msg) -> Result<(), Error> {
         match self.socket.as_mut() {
             Some(socket) => {
-                let frame = CANFrame::new(CAN_BROADCAST_ID, &msg.to_raw_data_array(), false, false)
-                    .map_err(|e| Error::Error(format!("{}", e)))?;
+                let id = StandardId::new(CAN_BROADCAST_ID as u16)
+                    .ok_or_else(|| Error::Error(format!("Invalid CAN ID: {}", CAN_BROADCAST_ID)))?;
+                let frame = socketcan::frame::CanDataFrame::new(id, &msg.to_raw_data_array())
+                    .ok_or_else(|| Error::Error(format!("Failed to create CAN data frame")))?;
 
                 socket
                     .write_frame(&frame)
@@ -193,7 +201,16 @@ impl ComInterface for CANInterface {
             Some(socket) => {
                 match socket.read_frame() {
                     Ok(frame) => {
-                        return Ok(Self::can_frame_to_msg(&frame));
+                        // Only process data frames
+                        match frame {
+                            CanFrame::Data(can_frame) => {
+                                return Ok(Self::can_frame_to_msg(&can_frame));
+                            }
+                            _ => {
+                                // Non-data frames are ignored, try again
+                                return Err(Error::ComNoResponse);
+                            }
+                        }
                     }
                     // Message timeout
                     Err(_) => {}

@@ -221,7 +221,11 @@ where
         interface.set_mode(ComMode::Specific(node_id.unwrap()))?;
     }
 
-    let mut device = Device::new(interface);
+    // Create device with stdout logger for CLI
+    let mut device = Device::new_with_logger(
+        interface,
+        Some(Box::new(|msg| println!("{}", msg)))
+    );
     device.init()?;
 
     Ok(device)

@@ -2,6 +2,7 @@
 members = [
     "common",
     "cli",
+    "tui",
 ]
 resolver = "2"
 
@@ -14,3 +15,6 @@ clap = "4.5"
 crc = "3.2"
 serialport = "4.7.0"
 socketcan = "3.5.0"
+ratatui = "0.29"
+crossterm = "0.28"
+gag = "1.0"

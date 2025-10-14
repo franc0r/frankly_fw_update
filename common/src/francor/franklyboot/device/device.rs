@@ -24,6 +24,9 @@ pub struct Device<I> {
 
     /// Vector of all entries
     entries: EntryList,
+
+    /// Optional logging callback for progress messages
+    log_fn: Option<Box<dyn Fn(&str) + Send>>,
 }
 
 /// Implementation of the Display trait for the Device struct
@@ -49,10 +52,19 @@ where
 {
     /// Create a new device
     pub fn new(interface: I) -> Self {
+        Self::new_with_logger(interface, None)
+    }
+
+    /// Create a new device with a custom logger callback
+    ///
+    /// The logger callback will be called for progress messages during operations like
+    /// erase, flash, and reset. If None is provided, no logging will occur.
+    pub fn new_with_logger(interface: I, log_fn: Option<Box<dyn Fn(&str) + Send>>) -> Self {
         let mut device = Self {
             interface: interface,
             flash_desc: FlashDesc::new(0, 0, 0),
             entries: EntryList::new(),
+            log_fn,
         };
 
         device._add_entry(EntryType::Const, RequestType::DevInfoBootloaderVersion);
@@ -133,7 +145,7 @@ where
             .get_entry_mut(RequestType::ResetDevice)
             .exec(&mut self.interface, 0)?;
 
-        println!("Reset device...");
+        self.log("Reset device...");
 
         Ok(())
     }
@@ -146,11 +158,11 @@ where
         let app_section = self.flash_desc.get_section("Application").unwrap();
 
         for flash_page_id in app_section.get_page_range() {
-            println!(
+            self.log(&format!(
                 "Erasing app pages [Flash-Page: {}/{}]",
                 flash_page_id + 1,
                 self.flash_desc.get_num_pages()
-            );
+            ));
 
             // Erase flash page
             self.entries
@@ -175,11 +187,11 @@ where
         let fw_num_pages = (fw_size / app_section.get_page_size()) + 1;
 
         // Print firmware information
-        println!(
+        self.log(&format!(
             "Firmware Data: Size: {:#.2} kB Num Pages: {}",
             (fw_size as f32 / 1024.0),
             fw_num_pages
-        );
+        ));
 
         // TODO add check if firmware is valid and fits into flash
         // Check page id (min limit)
@@ -192,18 +204,18 @@ where
         // Transmit all pages of the firmware to the device
         self._flash_app_pages(&app_fw)?;
 
-        println!("Checking CRC");
+        self.log("Checking CRC");
         self._check_app_crc(&app_fw)?;
 
-        println!("Flashing App CRC");
+        self.log("Flashing App CRC");
         self._flash_app_crc(app_fw.get_crc())?;
 
-        println!("Starting App");
+        self.log("Starting App");
         self.entries
             .get_entry_mut(RequestType::StartApp)
             .exec(&mut self.interface, 0)?;
 
-        println!("App successfully flashed & started!");
+        self.log("App successfully flashed & started!");
 
         Ok(())
     }
@@ -272,6 +284,13 @@ where
 
     // Private Functions --------------------------------------------------------------------------
 
+    /// Log a progress message if a logger callback is configured
+    fn log(&self, message: &str) {
+        if let Some(ref log_fn) = self.log_fn {
+            log_fn(message);
+        }
+    }
+
     fn _add_entry(&mut self, entry_type: EntryType, request_type: RequestType) {
         self.entries.push(Entry::new(entry_type, request_type));
     }
@@ -293,14 +312,14 @@ where
             let flash_page_id = app_page.get_id() + app_section.get_flash_page_id();
 
             // Print info
-            println!(
+            self.log(&format!(
                 "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
                 page_cnt,
                 app.get_page_lst().len(),
                 flash_page_id + 1,
                 app.get_flash_num_pages(),
                 app_page.get_address()
-            );
+            ));
 
             // Clear page buffer
             self.entries
@@ -371,11 +390,11 @@ where
 
             // Check if page is used
             if app.get_page(app_page_id).is_none() {
-                println!(
+                self.log(&format!(
                     "Erasing unused [Page: {}/{}]",
                     flash_page_id + 1,
                     flash_num_pages
-                );
+                ));
 
                 // Erase flash page
                 self.entries

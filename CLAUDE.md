@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Rust-based CLI tool for updating firmware on embedded devices using the Frankly Bootloader protocol. The tool supports multiple communication interfaces (Serial, CAN, Ethernet, and SIM) and provides commands for searching, erasing, flashing, and resetting devices.
 
-The project is organized as a Cargo workspace with two crates:
+The project is organized as a Cargo workspace with three crates:
 - **frankly-fw-update-common** (`common/`): Library containing the bootloader protocol implementation
 - **frankly-fw-update-cli** (`cli/`): Binary crate providing the command-line interface
+- **frankly-fw-update-tui** (`tui/`): Binary crate providing an interactive terminal UI interface using ratatui
 
 ## Build Commands
 
@@ -16,6 +17,7 @@ The project is organized as a Cargo workspace with two crates:
 ```bash
 cargo build                              # Build entire workspace
 cargo build -p frankly-fw-update-cli     # Build only the CLI
+cargo build -p frankly-fw-update-tui     # Build only the TUI
 cargo build -p frankly-fw-update-common  # Build only the library
 ```
 
@@ -70,16 +72,47 @@ cargo run -p frankly-fw-update-cli -- flash --type can --interface can0 --node 1
 cargo run -p frankly-fw-update-cli -- reset --type can --interface can0 --node 1
 ```
 
+## Running the TUI
+
+The Terminal User Interface (TUI) provides an interactive menu-driven interface for all operations:
+
+```bash
+cargo run -p frankly-fw-update-tui
+```
+
+### TUI Features
+
+The TUI provides an interactive, menu-driven experience with:
+- **Main Menu**: Select operation (Search, Erase, Flash, Reset)
+- **Interface Selection**: Choose interface type (SIM, Serial, CAN)
+- **Input Forms**: Guided input for interface name, node ID, and hex file path
+- **Operation Summary**: Review settings before execution
+- **Results Display**: View operation results with color-coded success/error messages
+
+### TUI Navigation
+- **↑↓**: Navigate menu options
+- **Enter**: Select/confirm
+- **Esc**: Go back/cancel
+- **q**: Quit application (when not in input mode)
+
+### TUI Implementation
+- Built with [ratatui](https://github.com/ratatui/ratatui) v0.29
+- Uses crossterm v0.28 for terminal manipulation
+- Shares core functionality with CLI via the common library
+
 ## Architecture
 
 ### High-Level Structure
 
-The codebase is organized as a Cargo workspace with two crates:
+The codebase is organized as a Cargo workspace with three crates:
 
 1. **CLI Crate** (`cli/`): Command-line interface binary
    - `cli/src/main.rs`: CLI using `clap` that parses arguments and dispatches to appropriate operations
 
-2. **Common Crate** (`common/`): Core bootloader protocol library
+2. **TUI Crate** (`tui/`): Terminal user interface binary
+   - `tui/src/main.rs`: Interactive TUI using `ratatui` with menu-driven operation selection
+
+3. **Common Crate** (`common/`): Core bootloader protocol library
    - `common/src/francor/franklyboot/`: Protocol implementation
    - `common/build.rs`: Compiles C++ device simulator API from the parent `frankly-bootloader` repository
    - `common/tests/`: Integration tests with test data and utilities

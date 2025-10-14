@@ -1,5 +1,5 @@
 use clap::{Arg, ArgAction, Command};
-use frankly_fw_update_cli::francor::franklyboot::{
+use frankly_fw_update_common::francor::franklyboot::{
     com::{
         can::CANInterface, serial::SerialInterface, sim::SIMInterface, ComConnParams, ComInterface,
         ComMode,

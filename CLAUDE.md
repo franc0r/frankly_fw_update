@@ -6,17 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Rust-based CLI tool for updating firmware on embedded devices using the Frankly Bootloader protocol. The tool supports multiple communication interfaces (Serial, CAN, Ethernet, and SIM) and provides commands for searching, erasing, flashing, and resetting devices.
 
+The project is organized as a Cargo workspace with two crates:
+- **frankly-fw-update-common** (`common/`): Library containing the bootloader protocol implementation
+- **frankly-fw-update-cli** (`cli/`): Binary crate providing the command-line interface
+
 ## Build Commands
 
 ### Build the project
 ```bash
-cargo build
+cargo build                              # Build entire workspace
+cargo build -p frankly-fw-update-cli     # Build only the CLI
+cargo build -p frankly-fw-update-common  # Build only the library
 ```
 
 ### Run tests
 ```bash
-cargo test              # Run all tests
-cargo test --lib        # Run only library tests
+cargo test                               # Run all tests in workspace
+cargo test -p frankly-fw-update-common   # Run only library tests
 ```
 
 ### Build with dependencies
@@ -39,44 +45,49 @@ sudo apt-get install -y libudev-dev
 
 All commands follow this pattern:
 ```bash
-cargo run -- <command> --type <interface-type> --interface <interface-name> [--node <node-id>]
+cargo run -p frankly-fw-update-cli -- <command> --type <interface-type> --interface <interface-name> [--node <node-id>]
 ```
 
 ### Search for devices
 ```bash
-cargo run -- search --type can --interface can0
-cargo run -- search --type serial --interface ttyACM0
-cargo run -- search --type sim --interface sim
+cargo run -p frankly-fw-update-cli -- search --type can --interface can0
+cargo run -p frankly-fw-update-cli -- search --type serial --interface ttyACM0
+cargo run -p frankly-fw-update-cli -- search --type sim --interface sim
 ```
 
 ### Erase application
 ```bash
-cargo run -- erase --type can --interface can0 --node 1
+cargo run -p frankly-fw-update-cli -- erase --type can --interface can0 --node 1
 ```
 
 ### Flash firmware
 ```bash
-cargo run -- flash --type can --interface can0 --node 1 --hex-file path/to/firmware.hex
+cargo run -p frankly-fw-update-cli -- flash --type can --interface can0 --node 1 --hex-file path/to/firmware.hex
 ```
 
 ### Reset device
 ```bash
-cargo run -- reset --type can --interface can0 --node 1
+cargo run -p frankly-fw-update-cli -- reset --type can --interface can0 --node 1
 ```
 
 ## Architecture
 
 ### High-Level Structure
 
-The codebase is organized around a layered architecture:
+The codebase is organized as a Cargo workspace with two crates:
 
-1. **CLI Layer** (`src/main.rs`): Command-line interface using `clap` that parses arguments and dispatches to appropriate operations
-2. **Library Layer** (`src/francor/franklyboot/`): Core bootloader protocol implementation
-3. **Build Integration** (`build.rs`): Compiles C++ device simulator API from the parent `frankly-bootloader` repository
+1. **CLI Crate** (`cli/`): Command-line interface binary
+   - `cli/src/main.rs`: CLI using `clap` that parses arguments and dispatches to appropriate operations
+
+2. **Common Crate** (`common/`): Core bootloader protocol library
+   - `common/src/francor/franklyboot/`: Protocol implementation
+   - `common/build.rs`: Compiles C++ device simulator API from the parent `frankly-bootloader` repository
+   - `common/tests/`: Integration tests with test data and utilities
+   - `common/tests/utils/can_device_simulator/`: Python-based CAN device simulator for testing
 
 ### Communication Interface Abstraction
 
-The `ComInterface` trait (`src/francor/franklyboot/com/mod.rs`) defines a unified interface for all communication methods:
+The `ComInterface` trait (`common/src/francor/franklyboot/com/mod.rs`) defines a unified interface for all communication methods:
 - **SerialInterface**: UART/USB serial communication
 - **CANInterface**: CAN bus communication (supports multi-device networks)
 - **SIMInterface**: Simulated device for testing (uses C++ FFI to device simulator)
@@ -90,7 +101,7 @@ Key trait methods:
 
 ### Device Abstraction
 
-The `Device<I: ComInterface>` struct (`src/francor/franklyboot/device/device.rs`) is generic over the communication interface, allowing the same device operations to work across all transport types.
+The `Device<I: ComInterface>` struct (`common/src/francor/franklyboot/device/device.rs`) is generic over the communication interface, allowing the same device operations to work across all transport types.
 
 The device manages:
 - **Entry System**: Each bootloader command (RequestType) is wrapped as an Entry with a type (Const/RO/RW/Cmd)
@@ -99,7 +110,7 @@ The device manages:
 
 ### Message Protocol
 
-Messages are 8-byte structures (`src/francor/franklyboot/com/msg.rs`):
+Messages are 8-byte structures (`common/src/francor/franklyboot/com/msg.rs`):
 - Bytes 0-1: RequestType (command identifier)
 - Byte 2: ResultType (status/error code)
 - Byte 3: packet_id (for matching requests/responses)
@@ -124,11 +135,11 @@ Flash operations (`Device::flash()`) follow this sequence:
 
 ### HexFile Parsing
 
-The `HexFile` struct (`src/francor/franklyboot/firmware/hex_file.rs`) implements Intel HEX format parsing and the `FirmwareDataInterface` trait to provide firmware data as a HashMap.
+The `HexFile` struct (`common/src/francor/franklyboot/firmware/hex_file.rs`) implements Intel HEX format parsing and the `FirmwareDataInterface` trait to provide firmware data as a HashMap.
 
 ### C++ FFI Integration
 
-The build script (`build.rs`) compiles C++ sources from the sibling `frankly-bootloader` repository:
+The build script (`common/build.rs`) compiles C++ sources from the sibling `frankly-bootloader` repository:
 - `francor/franklyboot/msg.cpp`: Message protocol implementation
 - `device_sim_api.cpp`: Device simulator for testing
 
@@ -137,7 +148,7 @@ The Rust SIMInterface wraps these C++ functions to provide a simulated device fo
 ## Code Organization Patterns
 
 ### Error Handling
-All bootloader operations return `Result<T, Error>` where `Error` is a custom enum (`src/francor/franklyboot/mod.rs`) with variants:
+All bootloader operations return `Result<T, Error>` where `Error` is a custom enum (`common/src/francor/franklyboot/mod.rs`) with variants:
 - `ComNoResponse`: Timeout waiting for device
 - `ComError(String)`: Transport layer error
 - `ResultError(String)`: Device returned error status

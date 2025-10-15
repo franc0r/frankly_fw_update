@@ -109,7 +109,7 @@ fn main() {
     match matches.subcommand() {
         Some(("search", search_matches)) => {
             let interface_type_str = search_matches.get_one::<String>("type").unwrap();
-            let interface_type = InterfaceType::from_str(&interface_type_str).unwrap();
+            let interface_type = InterfaceType::from_str(interface_type_str).unwrap();
             let interface_name = search_matches.get_one::<String>("interface").unwrap();
 
             match interface_type {
@@ -131,10 +131,7 @@ fn main() {
             let interface_type_str = erase_matches.get_one::<String>("type").unwrap();
             let interface_type = InterfaceType::from_str(interface_type_str).unwrap();
             let interface_name = erase_matches.get_one::<String>("interface").unwrap();
-            let node_id = match erase_matches.get_one::<u8>("node") {
-                Some(v) => Some(*v),
-                None => None,
-            };
+            let node_id = erase_matches.get_one::<u8>("node").copied();
 
             match interface_type {
                 InterfaceType::Serial => erase_device::<SerialInterface>(
@@ -155,39 +152,33 @@ fn main() {
             let interface_type_str = flash_matches.get_one::<String>("type").unwrap();
             let interface_type = InterfaceType::from_str(interface_type_str).unwrap();
             let interface_name = flash_matches.get_one::<String>("interface").unwrap();
-            let node_id = match flash_matches.get_one::<u8>("node") {
-                Some(v) => Some(*v),
-                None => None,
-            };
+            let node_id = flash_matches.get_one::<u8>("node").copied();
             let hex_file_path = flash_matches.get_one::<String>("hex-file").unwrap();
 
             match interface_type {
                 InterfaceType::Serial => flash_device::<SerialInterface>(
                     &ComConnParams::for_serial_conn(interface_name, 115200),
                     node_id,
-                    &hex_file_path,
+                    hex_file_path,
                 ),
                 InterfaceType::CAN => flash_device::<CANInterface>(
                     &ComConnParams::for_can_conn(interface_name),
                     node_id,
-                    &hex_file_path,
+                    hex_file_path,
                 ),
                 InterfaceType::Ethernet => println!("Ethernet not supported yet"),
                 InterfaceType::Sim => flash_device::<SIMInterface>(
                     &ComConnParams::for_sim_device(),
                     node_id,
-                    &hex_file_path,
+                    hex_file_path,
                 ),
             }
         }
         Some(("reset", reset_matches)) => {
             let interface_type_str = reset_matches.get_one::<String>("type").unwrap();
-            let interface_type = InterfaceType::from_str(&interface_type_str).unwrap();
+            let interface_type = InterfaceType::from_str(interface_type_str).unwrap();
             let interface_name = reset_matches.get_one::<String>("interface").unwrap();
-            let node_id = match reset_matches.get_one::<u8>("node") {
-                Some(v) => Some(*v),
-                None => None,
-            };
+            let node_id = reset_matches.get_one::<u8>("node").copied();
 
             match interface_type {
                 InterfaceType::Serial => reset_device::<SerialInterface>(
@@ -255,16 +246,17 @@ pub fn reset_device<I>(conn_params: &ComConnParams, node_id: Option<u8>)
 where
     I: ComInterface,
 {
-    if I::is_network() {
-        if node_id.is_none() {
-            println!("Node ID required for multi device network interface! Specify with --node <node-id>");
-            return;
-        }
+    if I::is_network() && node_id.is_none() {
+        println!(
+            "Node ID required for multi device network interface! Specify with --node <node-id>"
+        );
+        return;
     }
 
-    let progress_fn = Some(Box::new(|update: ProgressUpdate| match update {
-        ProgressUpdate::Message(msg) => println!("{}", msg),
-        _ => {}
+    let progress_fn = Some(Box::new(|update: ProgressUpdate| {
+        if let ProgressUpdate::Message(msg) = update {
+            println!("{}", msg)
+        }
     }) as Box<dyn Fn(ProgressUpdate) + Send>);
 
     let mut device = connect_device::<I>(conn_params, node_id, progress_fn).unwrap();
@@ -276,11 +268,11 @@ pub fn erase_device<I>(conn_params: &ComConnParams, node_id: Option<u8>)
 where
     I: ComInterface,
 {
-    if I::is_network() {
-        if node_id.is_none() {
-            println!("Node ID required for multi device network interface! Specify with --node <node-id>");
-            return;
-        }
+    if I::is_network() && node_id.is_none() {
+        println!(
+            "Node ID required for multi device network interface! Specify with --node <node-id>"
+        );
+        return;
     }
 
     let pb = Arc::new(Mutex::new(Option::<ProgressBar>::None));
@@ -320,11 +312,11 @@ pub fn flash_device<I>(conn_params: &ComConnParams, node_id: Option<u8>, hex_fil
 where
     I: ComInterface,
 {
-    if I::is_network() {
-        if node_id.is_none() {
-            println!("Node ID required for multi device network interface! Specify with --node <node-id>");
-            return;
-        }
+    if I::is_network() && node_id.is_none() {
+        println!(
+            "Node ID required for multi device network interface! Specify with --node <node-id>"
+        );
+        return;
     }
 
     let pb = Arc::new(Mutex::new(Option::<ProgressBar>::None));

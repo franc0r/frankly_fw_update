@@ -103,8 +103,8 @@ impl Entry {
         // Check checksum
         let mut checksum_calc = 0u16;
         checksum_calc += byte_count as u16;
-        checksum_calc += (offset >> 8) as u16;
-        checksum_calc += (offset & 0xFF) as u16;
+        checksum_calc += offset >> 8;
+        checksum_calc += offset & 0xFF;
         checksum_calc += record_type_raw as u16;
         for i in 0..byte_count {
             checksum_calc += data[i as usize] as u16;
@@ -134,11 +134,9 @@ pub struct HexFile {
 impl HexFile {
     pub fn from_file(filename: &str) -> Result<HexFile, String> {
         match std::fs::read_to_string(filename) {
-            Ok(f) => return Self::from_string(&f.as_str()),
-            Err(e) => {
-                return Err(format!("Failed to open file '{}': {}", filename, e));
-            }
-        };
+            Ok(f) => Self::from_string(f.as_str()),
+            Err(e) => Err(format!("Failed to open file '{}': {}", filename, e)),
+        }
     }
 
     pub fn from_string(hex_data: &str) -> Result<HexFile, String> {
@@ -154,8 +152,9 @@ impl HexFile {
 
         // Pares every line in hex file
         let mut line_idx = 0;
+        #[allow(clippy::explicit_counter_loop)]
         for line in hex_data.lines() {
-            if line.len() > 0 && line.chars().nth(0).unwrap() == ':' {
+            if !line.is_empty() && line.chars().nth(0).unwrap() == ':' {
                 let entry = match Entry::from_hex_line(&line[1..]) {
                     Ok(e) => e,
                     Err(e) => {
@@ -173,7 +172,7 @@ impl HexFile {
 
         // Convert to map
         let mut firmware_map = FirmwareDataRaw::new();
-        let mut address_extended = 0 as u32;
+        let mut address_extended = 0_u32;
         for entry in &entries {
             match entry.record_type {
                 RecordType::ExtendedLinearAddress => {
@@ -192,10 +191,10 @@ impl HexFile {
             }
         }
 
-        if firmware_map.len() == 0 {
-            return Err(format!("Hex file does not contain valid data!"));
+        if firmware_map.is_empty() {
+            Err("Hex file does not contain valid data!".to_string())
         } else {
-            return Ok(HexFile { data: firmware_map });
+            Ok(HexFile { data: firmware_map })
         }
     }
 }
@@ -204,8 +203,9 @@ pub fn parse_hex_file(hex_file: &str) -> Result<HashMap<u32, u8>, ErrorType> {
     let mut entries = Vec::new();
 
     let mut line_idx = 0;
+    #[allow(clippy::explicit_counter_loop)]
     for line in hex_file.lines() {
-        if line.len() > 0 && line.chars().nth(0).unwrap() == ':' {
+        if !line.is_empty() && line.starts_with(':') {
             let entry = match Entry::from_hex_line(&line[1..]) {
                 Ok(e) => e,
                 Err(e) => {
@@ -221,7 +221,7 @@ pub fn parse_hex_file(hex_file: &str) -> Result<HashMap<u32, u8>, ErrorType> {
 
     // Convert to map
     let mut firmware_map = HashMap::new();
-    let mut address_extended = 0 as u32;
+    let mut address_extended = 0_u32;
     for entry in &entries {
         match entry.record_type {
             RecordType::ExtendedLinearAddress => {
@@ -240,7 +240,7 @@ pub fn parse_hex_file(hex_file: &str) -> Result<HashMap<u32, u8>, ErrorType> {
         }
     }
 
-    if firmware_map.len() == 0 {
+    if firmware_map.is_empty() {
         return Err(ErrorType::NoValidData);
     }
 
@@ -254,6 +254,7 @@ impl FirmwareDataInterface for HexFile {
 }
 
 #[cfg(test)]
+#[allow(clippy::explicit_counter_loop)]
 mod tests {
     use super::*;
 
@@ -265,7 +266,7 @@ mod tests {
              :00000001FF\r\n";
 
         let expected_addresses: Vec<u32> = (0x8002000..0x8002020).collect();
-        let expected_data = vec![
+        let expected_data = [
             0x00, 0x00, 0x01, 0x20, 0x09, 0x23, 0x00, 0x08, 0xD1, 0x22, 0x00, 0x08, 0xD5, 0x22,
             0x00, 0x08, 0xD9, 0x22, 0x00, 0x08, 0xDD, 0x22, 0x00, 0x08, 0xE1, 0x22, 0x00, 0x08,
             0x00, 0x00, 0x00, 0x00,
@@ -274,7 +275,7 @@ mod tests {
         let hex_file = HexFile::from_string(hex_data).unwrap();
 
         let mut idx = 0;
-        let mut keys: Vec<u32> = hex_file.get_data().keys().map(|x| *x).collect();
+        let mut keys: Vec<u32> = hex_file.get_data().keys().copied().collect();
         keys.sort();
         for key in keys {
             assert_eq!(key, expected_addresses[idx]);
@@ -291,7 +292,7 @@ mod tests {
              :00000001FF\n";
 
         let expected_addresses: Vec<u32> = (0x8002000..0x8002020).collect();
-        let expected_data = vec![
+        let expected_data = [
             0x00, 0x00, 0x01, 0x20, 0x09, 0x23, 0x00, 0x08, 0xD1, 0x22, 0x00, 0x08, 0xD5, 0x22,
             0x00, 0x08, 0xD9, 0x22, 0x00, 0x08, 0xDD, 0x22, 0x00, 0x08, 0xE1, 0x22, 0x00, 0x08,
             0x00, 0x00, 0x00, 0x00,
@@ -300,7 +301,7 @@ mod tests {
         let hex_file = HexFile::from_string(hex_data).unwrap();
 
         let mut idx = 0;
-        let mut keys: Vec<u32> = hex_file.get_data().keys().map(|x| *x).collect();
+        let mut keys: Vec<u32> = hex_file.get_data().keys().copied().collect();
         keys.sort();
         for key in keys {
             assert_eq!(key, expected_addresses[idx]);
@@ -456,7 +457,7 @@ mod tests {
              :00000001FF\r\n";
 
         let expected_addresses: Vec<u32> = (0x8002000..0x8002020).collect();
-        let expected_data = vec![
+        let expected_data = [
             0x00, 0x00, 0x01, 0x20, 0x09, 0x23, 0x00, 0x08, 0xD1, 0x22, 0x00, 0x08, 0xD5, 0x22,
             0x00, 0x08, 0xD9, 0x22, 0x00, 0x08, 0xDD, 0x22, 0x00, 0x08, 0xE1, 0x22, 0x00, 0x08,
             0x00, 0x00, 0x00, 0x00,
@@ -470,7 +471,7 @@ mod tests {
             .get_firmware_data()
             .unwrap()
             .keys()
-            .map(|x| *x)
+            .copied()
             .collect();
         keys.sort();
         for key in keys {

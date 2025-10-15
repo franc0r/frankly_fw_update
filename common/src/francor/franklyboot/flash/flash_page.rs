@@ -13,9 +13,9 @@ pub struct FlashPage {
 impl FlashPage {
     pub fn new(id: u32, address: u32, bytes: Vec<u8>) -> Self {
         FlashPage {
-            id: id,
-            address: address,
-            bytes: bytes,
+            id,
+            address,
+            bytes,
             crc: 0,
         }
     }

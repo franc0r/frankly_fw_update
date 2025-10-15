@@ -75,9 +75,9 @@ impl FlashDesc {
     ///
     pub fn new(address: u32, size: u32, page_size: u32) -> FlashDesc {
         FlashDesc {
-            address: address,
-            size: size,
-            page_size: page_size,
+            address,
+            size,
+            page_size,
             section_lst: Vec::new(),
         }
     }
@@ -96,12 +96,12 @@ impl FlashDesc {
         }
 
         // section must start aligned to pages
-        if address % self.page_size != 0 {
+        if !address.is_multiple_of(self.page_size) {
             return Err(FlashDescError::FlashSectionAddressInvalid);
         }
 
         // section size must be multiple of page szize
-        if size % self.page_size != 0 {
+        if !size.is_multiple_of(self.page_size) {
             return Err(FlashDescError::FlashSectionSizeInvalid);
         }
 
@@ -194,18 +194,15 @@ impl FlashDesc {
     /// Get section by name
     ///
     pub fn get_section(&self, name: &str) -> Option<&FlashSection> {
-        for section in &self.section_lst {
-            if section.get_name() == name {
-                return Some(section);
-            }
-        }
-
-        None
+        self.section_lst
+            .iter()
+            .find(|&section| section.get_name() == name)
+            .map(|v| v as _)
     }
 }
 
 /// Flash section ---------------------------------------------------------------------------------
-
+///
 ///
 /// Representation of a flash section
 ///
@@ -239,10 +236,10 @@ impl FlashSection {
     ) -> FlashSection {
         FlashSection {
             name: name.to_string(),
-            address: address,
-            size: size,
-            flash_page_id: flash_page_id,
-            page_size: page_size,
+            address,
+            size,
+            flash_page_id,
+            page_size,
         }
     }
 
@@ -356,7 +353,7 @@ mod tests {
 
         let result = flash_desc.add_section(&name, address, size);
 
-        assert_eq!(result.is_err(), true);
+        assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
             FlashDescError::FlashSectionAddressInvalid
@@ -373,7 +370,7 @@ mod tests {
 
         let result = flash_desc.add_section(&name, address, size);
 
-        assert_eq!(result.is_err(), true);
+        assert!(result.is_err());
         assert_eq!(result.unwrap_err(), FlashDescError::FlashSectionSizeInvalid);
     }
 
@@ -387,7 +384,7 @@ mod tests {
 
         let result = flash_desc.add_section(&name, address, size);
 
-        assert_eq!(result.is_err(), true);
+        assert!(result.is_err());
         assert_eq!(result.unwrap_err(), FlashDescError::FlashSectionSizeTooBig);
     }
 
@@ -407,7 +404,7 @@ mod tests {
 
         let result = flash_desc.add_section(&name, address, size);
 
-        assert_eq!(result.is_err(), true);
+        assert!(result.is_err());
         assert_eq!(result.unwrap_err(), FlashDescError::FlashAreaAlreadyUsed);
     }
 
@@ -423,7 +420,7 @@ mod tests {
 
         let result = flash_desc.get_section(&name);
 
-        assert_eq!(result.is_some(), true);
+        assert!(result.is_some());
         assert_eq!(result.unwrap().get_name(), &name);
         assert_eq!(result.unwrap().get_address(), address);
         assert_eq!(result.unwrap().get_size(), size);
@@ -443,6 +440,6 @@ mod tests {
 
         let result = flash_desc.get_section(&name);
 
-        assert_eq!(result.is_none(), true);
+        assert!(result.is_none());
     }
 }

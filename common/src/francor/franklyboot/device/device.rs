@@ -64,7 +64,7 @@ where
         progress_fn: Option<Box<dyn Fn(ProgressUpdate) + Send>>,
     ) -> Self {
         let mut device = Self {
-            interface: interface,
+            interface,
             flash_desc: FlashDesc::new(0, 0, 0),
             entries: EntryList::new(),
             progress_fn,
@@ -203,7 +203,7 @@ where
         // Check firmware size (max limit)
 
         // Create app firmware representation
-        let mut app_fw = AppFirmware::from_section(&app_section);
+        let mut app_fw = AppFirmware::from_section(app_section);
         app_fw.append_firmware(fw_data)?;
 
         // Transmit all pages of the firmware to the device
@@ -309,7 +309,7 @@ where
             }
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn _flash_app_pages(&mut self, app: &AppFirmware) -> Result<(), Error> {

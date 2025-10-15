@@ -17,6 +17,12 @@ pub struct ComConnParams {
     baud_rate: Option<u32>,
 }
 
+impl Default for ComConnParams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ComConnParams {
     pub fn new() -> Self {
         ComConnParams {
@@ -29,16 +35,16 @@ impl ComConnParams {
         ComConnParams::new()
     }
 
-    pub fn for_serial_conn(name: &String, baud_rate: u32) -> Self {
+    pub fn for_serial_conn(name: &str, baud_rate: u32) -> Self {
         let mut params = ComConnParams::new();
-        params.name = Some(name.clone());
+        params.name = Some(name.to_owned());
         params.baud_rate = Some(baud_rate);
         params
     }
 
-    pub fn for_can_conn(name: &String) -> Self {
+    pub fn for_can_conn(name: &str) -> Self {
         let mut params = ComConnParams::new();
-        params.name = Some(name.clone());
+        params.name = Some(name.to_owned());
         params
     }
 }
@@ -112,6 +118,12 @@ pub struct ComSimulator {
     response_queue: VecDeque<Msg>,
     send_error: Option<Error>,
     recv_error: Option<Error>,
+}
+
+impl Default for ComSimulator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ComSimulator {

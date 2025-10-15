@@ -33,11 +33,11 @@ impl ComInterface for SerialInterface {
 
     fn open(&mut self, params: &ComConnParams) -> Result<(), Error> {
         if params.name.is_none() {
-            return Err(Error::Error(format!("Serial port name not set!")));
+            return Err(Error::Error("Serial port name not set!".to_string()));
         }
 
         if params.baud_rate.is_none() {
-            return Err(Error::Error(format!("Serial port baud rate not set!")));
+            return Err(Error::Error("Serial port baud rate not set!".to_string()));
         }
 
         let port = serialport::new(params.name.clone().unwrap(), params.baud_rate.unwrap())
@@ -68,11 +68,9 @@ impl ComInterface for SerialInterface {
                 port.set_timeout(timeout)
                     .map_err(|e| Error::Error(format!("Failed to set timeout: {}", e)))?;
                 self.timeout = timeout;
-                return Ok(());
+                Ok(())
             }
-            None => {
-                return Err(Error::Error(format!("Serial port not open!")));
-            }
+            None => Err(Error::Error("Serial port not open!".to_string())),
         }
     }
 
@@ -90,11 +88,9 @@ impl ComInterface for SerialInterface {
                 port.write_all(&msg.to_raw_data_array())
                     .map_err(|e| Error::Error(format!("Failed to write to serial port: {}", e)))?;
 
-                return Ok(());
+                Ok(())
             }
-            None => {
-                return Err(Error::Error(format!("Serial port not open!")));
-            }
+            None => Err(Error::Error("Serial port not open!".to_string())),
         }
     }
 
@@ -105,11 +101,9 @@ impl ComInterface for SerialInterface {
                 port.read_exact(&mut data)
                     .map_err(|e| Error::Error(format!("Failed to read from serial port: {}", e)))?;
 
-                return Ok(Msg::from_raw_data_array(&data));
+                Ok(Msg::from_raw_data_array(&data))
             }
-            None => {
-                return Err(Error::Error(format!("Serial port not open!")));
-            }
+            None => Err(Error::Error("Serial port not open!".to_string())),
         }
     }
 }

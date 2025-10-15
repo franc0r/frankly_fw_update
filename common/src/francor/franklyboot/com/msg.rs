@@ -163,24 +163,20 @@ impl ResultType {
 
     /// Returns true if the result type is a success
     pub fn is_ok(&self) -> bool {
-        match self {
-            ResultType::None => true,
-            ResultType::Ok => true,
-            _ => false,
-        }
+        matches!(self, ResultType::None | ResultType::Ok)
     }
 
     /// Returns true if the result type is an error
     pub fn is_error(&self) -> bool {
-        match self {
-            ResultType::Error => true,
-            ResultType::ErrUnknownReq => true,
-            ResultType::ErrNotSupported => true,
-            ResultType::ErrCRCInvld => true,
-            ResultType::ErrPageFull => true,
-            ResultType::ErrInvldArg => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            ResultType::Error
+                | ResultType::ErrUnknownReq
+                | ResultType::ErrNotSupported
+                | ResultType::ErrCRCInvld
+                | ResultType::ErrPageFull
+                | ResultType::ErrInvldArg
+        )
     }
 }
 
@@ -211,6 +207,12 @@ pub type MsgDataRaw = [u8; 4];
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MsgData {
     data: MsgDataRaw,
+}
+
+impl Default for MsgData {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MsgData {
@@ -277,10 +279,10 @@ impl Msg {
     /// Creates a new message object
     pub fn new(request: RequestType, result: ResultType, packet_id: u8, data: &MsgData) -> Msg {
         Msg {
-            request: request,
-            result: result,
-            packet_id: packet_id,
-            data: data.clone(),
+            request,
+            result,
+            packet_id,
+            data: *data,
         }
     }
 
@@ -290,7 +292,7 @@ impl Msg {
     /// The payload data is set to 0.
     pub fn new_std_request(request: RequestType) -> Msg {
         Msg {
-            request: request,
+            request,
             result: ResultType::None,
             packet_id: 0,
             data: MsgData::new(),
@@ -305,10 +307,10 @@ impl Msg {
         let data = MsgData::from_array(&[data[4], data[5], data[6], data[7]]);
 
         Msg {
-            request: request,
-            result: result,
-            packet_id: packet_id,
-            data: data,
+            request,
+            result,
+            packet_id,
+            data,
         }
     }
 
@@ -358,17 +360,17 @@ impl Msg {
                 response.data
             );
 
-            if result_ok == false {
+            if !result_ok {
                 Err(Error::ResultError(format!(
                     "Request \"{:?}\" returned error result {}\n{}",
                     self.request, response.result, error_info
                 )))
-            } else if packet_id_valid == false {
+            } else if !packet_id_valid {
                 Err(Error::MsgCorruption(format!(
                     "Message response corrupted packet id invalid!\n{}",
                     error_info
                 )))
-            } else if request_valid == false {
+            } else if !request_valid {
                 Err(Error::MsgCorruption(format!(
                     "Request type mismatch! Expected: \"{:?}\", Received: \"{:?}\"\n{}",
                     self.request, response.request, error_info
@@ -429,6 +431,7 @@ impl Msg {
 // Tests ------------------------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 
@@ -548,26 +551,26 @@ mod tests {
 
     #[test]
     fn result_is_ok() {
-        assert_eq!(ResultType::None.is_ok(), true);
-        assert_eq!(ResultType::Ok.is_ok(), true);
-        assert_eq!(ResultType::Error.is_ok(), false);
-        assert_eq!(ResultType::ErrUnknownReq.is_ok(), false);
-        assert_eq!(ResultType::ErrNotSupported.is_ok(), false);
-        assert_eq!(ResultType::ErrCRCInvld.is_ok(), false);
-        assert_eq!(ResultType::ErrPageFull.is_ok(), false);
-        assert_eq!(ResultType::ErrInvldArg.is_ok(), false);
+        assert!(ResultType::None.is_ok());
+        assert!(ResultType::Ok.is_ok());
+        assert!(!ResultType::Error.is_ok());
+        assert!(!ResultType::ErrUnknownReq.is_ok());
+        assert!(!ResultType::ErrNotSupported.is_ok());
+        assert!(!ResultType::ErrCRCInvld.is_ok());
+        assert!(!ResultType::ErrPageFull.is_ok());
+        assert!(!ResultType::ErrInvldArg.is_ok());
     }
 
     #[test]
     fn result_is_error() {
-        assert_eq!(ResultType::None.is_error(), false);
-        assert_eq!(ResultType::Ok.is_error(), false);
-        assert_eq!(ResultType::Error.is_error(), true);
-        assert_eq!(ResultType::ErrUnknownReq.is_error(), true);
-        assert_eq!(ResultType::ErrNotSupported.is_error(), true);
-        assert_eq!(ResultType::ErrCRCInvld.is_error(), true);
-        assert_eq!(ResultType::ErrPageFull.is_error(), true);
-        assert_eq!(ResultType::ErrInvldArg.is_error(), true);
+        assert!(!ResultType::None.is_error());
+        assert!(!ResultType::Ok.is_error());
+        assert!(ResultType::Error.is_error());
+        assert!(ResultType::ErrUnknownReq.is_error());
+        assert!(ResultType::ErrNotSupported.is_error());
+        assert!(ResultType::ErrCRCInvld.is_error());
+        assert!(ResultType::ErrPageFull.is_error());
+        assert!(ResultType::ErrInvldArg.is_error());
     }
 
     #[test]

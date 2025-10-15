@@ -89,19 +89,16 @@ impl ComInterface for SIMInterface {
     }
 
     fn send(&mut self, msg: &Msg) -> Result<(), Error> {
-        match self.mode {
-            ComMode::Specific(node_id) => {
-                sim_api::send_node_msg(node_id, &msg.to_raw_data_array());
-            }
-            _ => {}
+        if let ComMode::Specific(node_id) = self.mode {
+            sim_api::send_node_msg(node_id, &msg.to_raw_data_array());
         }
 
         Ok(())
     }
 
     fn recv(&mut self) -> Result<Msg, Error> {
-        match self.mode {
-            ComMode::Specific(node_id) => match sim_api::get_node_response_msg(node_id) {
+        if let ComMode::Specific(node_id) = self.mode {
+            match sim_api::get_node_response_msg(node_id) {
                 Some(msg_raw) => {
                     let response = Msg::from_raw_data_array(&msg_raw);
                     return Ok(response);
@@ -109,11 +106,10 @@ impl ComInterface for SIMInterface {
                 None => {
                     return Err(Error::ComNoResponse);
                 }
-            },
-            _ => {}
+            }
         }
 
-        return Err(Error::Error("Mode not supported!".to_string()));
+        Err(Error::Error("Mode not supported!".to_string()))
     }
 }
 

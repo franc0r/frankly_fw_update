@@ -29,6 +29,7 @@ use std::thread;
 const SIM_NODE_LST: [u8; 4] = [1, 3, 31, 8];
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 enum InterfaceType {
     Sim,
     Serial,
@@ -46,6 +47,7 @@ impl InterfaceType {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct DiscoveredDevice {
     node_id: Option<u8>,
     display_name: String,
@@ -1337,11 +1339,7 @@ fn draw_search_overlay(f: &mut Frame, app: &App) {
     // Clear the background
     f.render_widget(Clear, area);
 
-    let interface_name = app
-        .selected_interface
-        .as_ref()
-        .map(|s| s.as_str())
-        .unwrap_or("Unknown");
+    let interface_name = app.selected_interface.as_deref().unwrap_or("Unknown");
     let interface_type = app
         .selected_interface_type
         .as_ref()

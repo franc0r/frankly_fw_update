@@ -47,9 +47,9 @@ impl AppFirmware {
     ///
     pub fn new(app_start_address: u32, flash_page_size: u32, flash_num_pages: u32) -> Self {
         AppFirmware {
-            app_start_address: app_start_address,
-            flash_page_size: flash_page_size,
-            flash_num_pages: flash_num_pages,
+            app_start_address,
+            flash_page_size,
+            flash_num_pages,
             page_lst: Vec::new(),
             crc: 0,
         }
@@ -70,7 +70,7 @@ impl AppFirmware {
     ///
     pub fn append_firmware(&mut self, data_raw: &FirmwareDataRaw) -> Result<(), Error> {
         // Sort hash map keys by rising order
-        let mut byte_address_lst: Vec<u32> = data_raw.keys().map(|x| *x).collect();
+        let mut byte_address_lst: Vec<u32> = data_raw.keys().copied().collect();
         byte_address_lst.sort();
 
         // Iterate over every byte
@@ -140,13 +140,10 @@ impl AppFirmware {
     /// Get reference to page
     ///
     pub fn get_page(&self, page_id: u32) -> Option<&FlashPage> {
-        for page in self.page_lst.iter() {
-            if page.get_id() == page_id {
-                return Some(page);
-            }
-        }
-
-        return None;
+        self.page_lst
+            .iter()
+            .find(|&page| page.get_id() == page_id)
+            .map(|v| v as _)
     }
 
     ///
@@ -180,13 +177,9 @@ impl AppFirmware {
     // Private Functions --------------------------------------------------------------------------
 
     fn _get_page_mut(&mut self, page_id: u32) -> Option<&mut FlashPage> {
-        for page in self.page_lst.iter_mut() {
-            if page.get_id() == page_id {
-                return Some(page);
-            }
-        }
-
-        return None;
+        self.page_lst
+            .iter_mut()
+            .find(|page| page.get_id() == page_id)
     }
 
     fn _calc_app_crc(&mut self) {

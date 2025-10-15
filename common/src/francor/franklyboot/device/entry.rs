@@ -80,7 +80,7 @@ impl fmt::Display for EntryType {
 }
 
 /// Entry -----------------------------------------------------------------------------------------
-
+///
 /// Representation of an device entry
 ///
 /// This struct represents an entry of a device. An entry is a value which can be read, written or
@@ -96,8 +96,8 @@ impl Entry {
     /// Create a new entry
     pub fn new(entry_type: EntryType, request_type: RequestType) -> Self {
         Entry {
-            entry_type: entry_type,
-            request_type: request_type,
+            entry_type,
+            request_type,
             value: None,
         }
     }
@@ -123,10 +123,7 @@ impl Entry {
     /// be read from the device only once and then buffered. If the entry is not a constant value
     /// the value will be read from the device every time this function is called.
     ///
-    pub fn read_value<'a, T: ComInterface>(
-        &mut self,
-        interface: &'a mut T,
-    ) -> Result<&MsgData, Error> {
+    pub fn read_value<T: ComInterface>(&mut self, interface: &mut T) -> Result<&MsgData, Error> {
         if self.entry_type.is_readable() {
             let read_const_value = self.entry_type.is_const() && self.value.is_none();
             let read_normal_value = self.entry_type.is_readable();
@@ -135,7 +132,7 @@ impl Entry {
                 self._read_from_device(interface)?;
             }
 
-            Ok(&self.value.as_ref().unwrap())
+            Ok(self.value.as_ref().unwrap())
         } else {
             Err(Error::Error(format!(
                 "Device entry of type {} is not readable!",
@@ -148,9 +145,9 @@ impl Entry {
     ///
     /// This function writes the value of the entry to the device. The entry must be of type RW.
     ///
-    pub fn write_value<'a, T: ComInterface>(
+    pub fn write_value<T: ComInterface>(
         &mut self,
-        interface: &'a mut T,
+        interface: &mut T,
         packet_id: u8,
         data: &MsgData,
     ) -> Result<(), Error> {
@@ -168,11 +165,7 @@ impl Entry {
     ///
     /// This function executes the entry. The entry must be of type CMD.
     ///
-    pub fn exec<'a, T: ComInterface>(
-        &mut self,
-        interface: &'a mut T,
-        argument: u32,
-    ) -> Result<(), Error> {
+    pub fn exec<T: ComInterface>(&mut self, interface: &mut T, argument: u32) -> Result<(), Error> {
         if self.entry_type.is_executable() {
             self._write_to_device(interface, 0, &MsgData::from_word(argument))
         } else {
@@ -185,24 +178,21 @@ impl Entry {
 
     // Private functions --------------------------------------------------------------------------
 
-    fn _read_from_device<'a, T: ComInterface>(
-        &mut self,
-        interface: &'a mut T,
-    ) -> Result<(), Error> {
+    fn _read_from_device<T: ComInterface>(&mut self, interface: &mut T) -> Result<(), Error> {
         let request = Msg::new_std_request(self.request_type);
 
         interface.send(&request)?;
         let response = interface.recv()?;
         request.is_response_ok(&response)?;
 
-        self.value = Some(response.get_data().clone());
+        self.value = Some(*response.get_data());
 
         Ok(())
     }
 
-    fn _write_to_device<'a, T: ComInterface>(
+    fn _write_to_device<T: ComInterface>(
         &mut self,
-        interface: &'a mut T,
+        interface: &mut T,
         packet_id: u8,
         data: &MsgData,
     ) -> Result<(), Error> {
@@ -213,7 +203,7 @@ impl Entry {
         request.is_response_ok(&response)?;
         request.is_response_data_ok(&response)?;
 
-        self.value = Some(response.get_data().clone());
+        self.value = Some(*response.get_data());
 
         Ok(())
     }
@@ -224,6 +214,12 @@ impl Entry {
 pub struct EntryList {
     /// Vector storing every entry
     entries: Vec<Entry>,
+}
+
+impl Default for EntryList {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EntryList {

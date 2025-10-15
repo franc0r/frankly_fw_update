@@ -85,6 +85,8 @@ cargo run -p frankly-fw-update-tui
 The TUI provides an interactive, menu-driven experience with:
 - **Main Menu**: Select operation (Search, Erase, Flash, Reset)
 - **Interface Selection**: Choose interface type (SIM, Serial, CAN)
+- **Device Discovery**: Automatic scanning for available devices on selected interface
+- **Device List Refresh**: Press F5 to rescan and update the device list
 - **Input Forms**: Guided input for interface name, node ID, and hex file path
 - **File Browser**: Interactive file system navigation to select hex files (only .hex files shown)
 - **Operation Summary**: Review settings before execution
@@ -94,6 +96,7 @@ The TUI provides an interactive, menu-driven experience with:
 - **↑↓**: Navigate menu options
 - **Enter**: Select/confirm
 - **Tab**: Open file browser (when entering hex file path)
+- **F5**: Refresh device list (rescan for devices on current interface)
 - **Esc**: Go back/cancel
 - **q**: Quit application (when not in input mode)
 

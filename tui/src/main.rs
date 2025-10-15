@@ -17,7 +17,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
 use std::io;
@@ -90,6 +90,13 @@ enum OperationMessage {
     Error(String),
 }
 
+#[derive(Debug)]
+enum SearchMessage {
+    DeviceFound(DiscoveredDevice),
+    Complete,
+    Error(String),
+}
+
 #[derive(Debug, Clone)]
 struct FileEntry {
     name: String,
@@ -113,11 +120,14 @@ struct App {
     hex_file_input_mode: bool,
     result_message: Vec<String>,
     error_message: Option<String>,
-    status_message: String,
+    device_list_refresh_message: Option<String>,
     // Progress tracking
     operation_progress: Option<(u32, u32)>, // (current, total)
     operation_status: String,
     operation_receiver: Option<Receiver<OperationMessage>>,
+    // Search tracking
+    search_receiver: Option<Receiver<SearchMessage>>,
+    is_refresh_search: bool,
     // File browser
     file_browser_current_dir: PathBuf,
     file_browser_entries: Vec<FileEntry>,
@@ -143,10 +153,12 @@ impl App {
             hex_file_input_mode: false,
             result_message: Vec::new(),
             error_message: None,
-            status_message: String::new(),
+            device_list_refresh_message: None,
             operation_progress: None,
             operation_status: String::new(),
             operation_receiver: None,
+            search_receiver: None,
+            is_refresh_search: false,
             file_browser_current_dir: current_dir,
             file_browser_entries: Vec::new(),
             file_browser_list_state: ListState::default(),
@@ -200,117 +212,6 @@ impl App {
 
         if !self.available_interfaces.is_empty() {
             self.interface_list_state.select(Some(0));
-        }
-    }
-
-    fn search_devices(&mut self) {
-        self.discovered_devices.clear();
-        self.status_message = "Searching for devices...".to_string();
-
-        let interface_type = match &self.selected_interface_type {
-            Some(it) => it.clone(),
-            None => return,
-        };
-
-        match interface_type {
-            InterfaceType::Sim => {
-                SIMInterface::config_nodes(SIM_NODE_LST.to_vec()).ok();
-                self.search_devices_internal::<SIMInterface>();
-            }
-            InterfaceType::Serial => {
-                self.search_devices_internal::<SerialInterface>();
-            }
-            InterfaceType::CAN => {
-                self.search_devices_internal::<CANInterface>();
-            }
-        }
-
-        self.status_message.clear();
-
-        if !self.discovered_devices.is_empty() {
-            self.device_list_state.select(Some(0));
-        }
-    }
-
-    fn search_devices_internal<I: ComInterface>(&mut self) {
-        let interface_name = match &self.selected_interface {
-            Some(name) => name,
-            None => return,
-        };
-
-        let conn_params = match self.selected_interface_type.as_ref().unwrap() {
-            InterfaceType::Sim => ComConnParams::for_sim_device(),
-            InterfaceType::Serial => ComConnParams::for_serial_conn(interface_name, 115200),
-            InterfaceType::CAN => ComConnParams::for_can_conn(interface_name),
-        };
-
-        if I::is_network() {
-            // Multi-device network interface (CAN, SIM)
-            match I::create() {
-                Ok(mut interface) => {
-                    if let Err(e) = interface.open(&conn_params) {
-                        self.error_message = Some(format!("Failed to open interface: {:?}", e));
-                        return;
-                    }
-                    match interface.scan_network() {
-                        Ok(node_lst) => {
-                            for node in node_lst {
-                                // No logger needed during device search
-                                match self.connect_device::<I>(&conn_params, Some(node), None) {
-                                    Ok(device) => {
-                                        let device_info = format!("{}", device)
-                                            .replace('\t', " ")
-                                            .replace('\r', "")
-                                            .replace('\n', " ");
-                                        let display_name = format!("Node {:3} - {}", node, device_info);
-                                        self.discovered_devices.push(DiscoveredDevice {
-                                            node_id: Some(node),
-                                            display_name,
-                                            device_info,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        self.discovered_devices.push(DiscoveredDevice {
-                                            node_id: Some(node),
-                                            display_name: format!("Node {:3} - Error: {:?}", node, e),
-                                            device_info: String::new(),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            self.error_message = Some(format!("Network scan failed: {:?}", e));
-                        }
-                    }
-                }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to create interface: {:?}", e));
-                }
-            }
-        } else {
-            // Single device interface (Serial)
-            // No logger needed during device search
-            match self.connect_device::<I>(&conn_params, None, None) {
-                Ok(device) => {
-                    let device_info = format!("{}", device)
-                        .replace('\t', " ")
-                        .replace('\r', "")
-                        .replace('\n', " ");
-                    self.discovered_devices.push(DiscoveredDevice {
-                        node_id: None,
-                        display_name: device_info.clone(),
-                        device_info,
-                    });
-                }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to connect: {:?}", e));
-                }
-            }
-        }
-
-        if self.discovered_devices.is_empty() && self.error_message.is_none() {
-            self.error_message = Some("No devices found".to_string());
         }
     }
 
@@ -555,24 +456,6 @@ impl App {
         }
     }
 
-    fn connect_device<I: ComInterface>(
-        &self,
-        conn_params: &ComConnParams,
-        node_id: Option<u8>,
-        progress_fn: Option<Box<dyn Fn(ProgressUpdate) + Send>>,
-    ) -> Result<Device<I>, Error> {
-        let mut interface = I::create()?;
-        interface.open(conn_params)?;
-        if let Some(node) = node_id {
-            interface.set_mode(ComMode::Specific(node))?;
-        }
-
-        let mut device = Device::new_with_progress(interface, progress_fn);
-        device.init()?;
-
-        Ok(device)
-    }
-
     fn process_operation_messages(&mut self) {
         let mut operation_complete = false;
         let mut operation_error = None;
@@ -689,6 +572,191 @@ impl App {
         self.populate_file_browser();
     }
 
+    fn spawn_search(&mut self) {
+        self.discovered_devices.clear();
+        self.error_message = None;
+
+        let interface_type = match &self.selected_interface_type {
+            Some(it) => it.clone(),
+            None => return,
+        };
+
+        let interface_name = match &self.selected_interface {
+            Some(name) => name.clone(),
+            None => return,
+        };
+
+        // Create channel for search updates
+        let (tx, rx) = channel();
+        self.search_receiver = Some(rx);
+
+        // Spawn background thread for search
+        thread::spawn(move || {
+            let conn_params = match interface_type {
+                InterfaceType::Sim => ComConnParams::for_sim_device(),
+                InterfaceType::Serial => ComConnParams::for_serial_conn(&interface_name, 115200),
+                InterfaceType::CAN => ComConnParams::for_can_conn(&interface_name),
+            };
+
+            match interface_type {
+                InterfaceType::Sim => {
+                    SIMInterface::config_nodes(SIM_NODE_LST.to_vec()).ok();
+                    Self::search_devices_async::<SIMInterface>(tx, conn_params);
+                }
+                InterfaceType::Serial => {
+                    Self::search_devices_async::<SerialInterface>(tx, conn_params);
+                }
+                InterfaceType::CAN => {
+                    Self::search_devices_async::<CANInterface>(tx, conn_params);
+                }
+            }
+        });
+    }
+
+    fn search_devices_async<I: ComInterface + 'static>(
+        tx: Sender<SearchMessage>,
+        conn_params: ComConnParams,
+    ) {
+        if I::is_network() {
+            // Multi-device network interface (CAN, SIM)
+            match I::create() {
+                Ok(mut interface) => {
+                    if let Err(e) = interface.open(&conn_params) {
+                        tx.send(SearchMessage::Error(format!("Failed to open interface: {:?}", e))).ok();
+                        return;
+                    }
+                    match interface.scan_network() {
+                        Ok(node_lst) => {
+                            for node in node_lst {
+                                match Self::connect_and_get_info::<I>(&conn_params, Some(node)) {
+                                    Ok((device_info, display_name)) => {
+                                        tx.send(SearchMessage::DeviceFound(DiscoveredDevice {
+                                            node_id: Some(node),
+                                            display_name,
+                                            device_info,
+                                        })).ok();
+                                    }
+                                    Err(e) => {
+                                        tx.send(SearchMessage::DeviceFound(DiscoveredDevice {
+                                            node_id: Some(node),
+                                            display_name: format!("Node {:3} - Error: {:?}", node, e),
+                                            device_info: String::new(),
+                                        })).ok();
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tx.send(SearchMessage::Error(format!("Network scan failed: {:?}", e))).ok();
+                            return;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tx.send(SearchMessage::Error(format!("Failed to create interface: {:?}", e))).ok();
+                    return;
+                }
+            }
+        } else {
+            // Single device interface (Serial)
+            match Self::connect_and_get_info::<I>(&conn_params, None) {
+                Ok((device_info, display_name)) => {
+                    tx.send(SearchMessage::DeviceFound(DiscoveredDevice {
+                        node_id: None,
+                        display_name,
+                        device_info,
+                    })).ok();
+                }
+                Err(e) => {
+                    tx.send(SearchMessage::Error(format!("Failed to connect: {:?}", e))).ok();
+                    return;
+                }
+            }
+        }
+
+        tx.send(SearchMessage::Complete).ok();
+    }
+
+    fn connect_and_get_info<I: ComInterface>(
+        conn_params: &ComConnParams,
+        node_id: Option<u8>,
+    ) -> Result<(String, String), Error> {
+        let mut interface = I::create()?;
+        interface.open(conn_params)?;
+        if let Some(node) = node_id {
+            interface.set_mode(ComMode::Specific(node))?;
+        }
+
+        let mut device = Device::new(interface);
+        device.init()?;
+
+        let device_info = format!("{}", device)
+            .replace('\t', " ")
+            .replace('\r', "")
+            .replace('\n', " ");
+
+        let display_name = if let Some(node) = node_id {
+            format!("Node {:3} - {}", node, device_info)
+        } else {
+            device_info.clone()
+        };
+
+        Ok((device_info, display_name))
+    }
+
+    fn process_search_messages(&mut self) {
+        let mut search_complete = false;
+        let mut search_error = None;
+
+        if let Some(ref receiver) = self.search_receiver {
+            while let Ok(msg) = receiver.try_recv() {
+                match msg {
+                    SearchMessage::DeviceFound(device) => {
+                        self.discovered_devices.push(device);
+                    }
+                    SearchMessage::Complete => {
+                        search_complete = true;
+                    }
+                    SearchMessage::Error(err) => {
+                        search_error = Some(err);
+                    }
+                }
+            }
+        }
+
+        // Handle completion after the borrow ends
+        if search_complete || search_error.is_some() {
+            self.search_receiver = None;
+
+            if let Some(err) = search_error {
+                self.error_message = Some(err);
+            }
+
+            if self.discovered_devices.is_empty() && self.error_message.is_none() {
+                self.error_message = Some("No devices found".to_string());
+            }
+
+            // Set refresh message if this was a refresh operation
+            if self.is_refresh_search {
+                let device_count = self.discovered_devices.len();
+                self.device_list_refresh_message = Some(format!(
+                    "Device list refreshed - Found {} device(s)",
+                    device_count
+                ));
+                self.is_refresh_search = false;
+            }
+
+            if !self.discovered_devices.is_empty() {
+                self.device_list_state.select(Some(0));
+                self.current_screen = Screen::DeviceList;
+            } else if self.error_message.is_some() {
+                self.current_screen = Screen::Results;
+            } else {
+                self.current_screen = Screen::DeviceList;
+            }
+        }
+    }
+
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -726,6 +794,8 @@ fn run_app<B: ratatui::backend::Backend>(
     loop {
         // Process background operation messages
         app.process_operation_messages();
+        // Process background search messages
+        app.process_search_messages();
 
         terminal.draw(|f| ui(f, app))?;
 
@@ -813,14 +883,7 @@ fn handle_interface_selection(app: &mut App, key: KeyCode) {
                 if let Some(interface) = app.available_interfaces.get(idx) {
                     app.selected_interface = Some(interface.clone());
                     app.current_screen = Screen::Searching;
-                    app.search_devices();
-                    if !app.discovered_devices.is_empty() {
-                        app.current_screen = Screen::DeviceList;
-                    } else if app.error_message.is_some() {
-                        app.current_screen = Screen::Results;
-                    } else {
-                        app.current_screen = Screen::InterfaceSelection;
-                    }
+                    app.spawn_search();
                 }
             }
         }
@@ -840,6 +903,8 @@ fn handle_device_list(app: &mut App, key: KeyCode) {
                 None => 0,
             };
             app.device_list_state.select(Some(i));
+            // Clear refresh message when user interacts
+            app.device_list_refresh_message = None;
         }
         KeyCode::Up => {
             let max_idx = app.discovered_devices.len().saturating_sub(1);
@@ -848,10 +913,19 @@ fn handle_device_list(app: &mut App, key: KeyCode) {
                 None => 0,
             };
             app.device_list_state.select(Some(i));
+            // Clear refresh message when user interacts
+            app.device_list_refresh_message = None;
         }
         KeyCode::Enter => {
             app.selected_device_index = app.device_list_state.selected();
+            app.device_list_refresh_message = None;
             app.current_screen = Screen::CommandMenu;
+        }
+        KeyCode::F(5) => {
+            // Refresh device list using async search
+            app.is_refresh_search = true;
+            app.current_screen = Screen::Searching;
+            app.spawn_search();
         }
         KeyCode::Esc => {
             app.current_screen = Screen::InterfaceSelection;
@@ -991,7 +1065,11 @@ fn ui(f: &mut Frame, app: &App) {
     match app.current_screen {
         Screen::InterfaceTypeSelection => draw_interface_type_selection(f, app, size),
         Screen::InterfaceSelection => draw_interface_selection(f, app, size),
-        Screen::Searching => draw_searching(f, app, size),
+        Screen::Searching => {
+            // Draw device list in background with overlay
+            draw_device_list(f, app, size);
+            draw_search_overlay(f, app);
+        }
         Screen::DeviceList => draw_device_list(f, app, size),
         Screen::CommandMenu => draw_command_menu(f, app, size),
         Screen::HexFileInput => draw_hex_file_input(f, app, size),
@@ -999,6 +1077,68 @@ fn ui(f: &mut Frame, app: &App) {
         Screen::Executing => draw_executing(f, app, size),
         Screen::Results => draw_results(f, app, size),
     }
+}
+
+/// Create a centered rect for popup
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+/// Draw a search overlay popup
+fn draw_search_overlay(f: &mut Frame, app: &App) {
+    let area = centered_rect(60, 30, f.area());
+
+    // Clear the background
+    f.render_widget(Clear, area);
+
+    let interface_name = app.selected_interface.as_ref().map(|s| s.as_str()).unwrap_or("Unknown");
+    let interface_type = app.selected_interface_type.as_ref().map(|it| it.as_str()).unwrap_or("Unknown");
+
+    let text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("⏳ Searching for devices...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Interface: ", Style::default().fg(Color::Cyan)),
+            Span::raw(format!("{} ({})", interface_name, interface_type)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Please wait, do not interact with the TUI", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
+        ]),
+        Line::from(""),
+    ];
+
+    let block = Block::default()
+        .title(" Device Search ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .style(Style::default().bg(Color::Black));
+
+    let paragraph = Paragraph::new(text)
+        .block(block)
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(paragraph, area);
 }
 
 fn draw_interface_type_selection(f: &mut Frame, app: &App, area: Rect) {
@@ -1085,49 +1225,27 @@ fn draw_interface_selection(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(help, chunks[2]);
 }
 
-fn draw_searching(f: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(2)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(10),
-        ])
-        .split(area);
-
-    let title = Paragraph::new("Searching for Devices...")
-        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
-    f.render_widget(title, chunks[0]);
-
-    let interface_name = app.selected_interface.as_ref().map(|s| s.as_str()).unwrap_or("Unknown");
-    let info = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("Interface Type: ", Style::default().fg(Color::Green)),
-            Span::raw(app.selected_interface_type.as_ref().map(|it| it.as_str()).unwrap_or("Unknown")),
-        ]),
-        Line::from(vec![
-            Span::styled("Interface: ", Style::default().fg(Color::Green)),
-            Span::raw(interface_name),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled("Scanning for devices...", Style::default().fg(Color::Yellow))),
-    ])
-    .block(Block::default().borders(Borders::ALL))
-    .wrap(Wrap { trim: true });
-    f.render_widget(info, chunks[1]);
-}
-
 fn draw_device_list(f: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(2)
-        .constraints([
+    // Adjust constraints based on whether we have a refresh message
+    let constraints = if app.device_list_refresh_message.is_some() {
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(3),  // Refresh message
+            Constraint::Min(10),
+            Constraint::Length(3),
+        ]
+    } else {
+        vec![
             Constraint::Length(3),
             Constraint::Min(10),
             Constraint::Length(3),
-        ])
+        ]
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints(constraints)
         .split(area);
 
     let title = Paragraph::new("Select Device")
@@ -1135,6 +1253,18 @@ fn draw_device_list(f: &mut Frame, app: &App, area: Rect) {
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
+
+    let (list_chunk, help_chunk) = if let Some(ref refresh_msg) = app.device_list_refresh_message {
+        // Show refresh message
+        let refresh_info = Paragraph::new(refresh_msg.as_str())
+            .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(refresh_info, chunks[1]);
+        (2, 3)
+    } else {
+        (1, 2)
+    };
 
     let items: Vec<ListItem> = app.discovered_devices
         .iter()
@@ -1151,13 +1281,13 @@ fn draw_device_list(f: &mut Frame, app: &App, area: Rect) {
         .highlight_symbol(">> ");
 
     let mut state = app.device_list_state.clone();
-    f.render_stateful_widget(list, chunks[1], &mut state);
+    f.render_stateful_widget(list, chunks[list_chunk], &mut state);
 
-    let help = Paragraph::new("Use ↑↓ to navigate, Enter to select, Esc to go back, 'q' to quit")
+    let help = Paragraph::new("↑↓ to navigate | Enter to select | F5 to refresh | Esc to go back | 'q' to quit")
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
-    f.render_widget(help, chunks[2]);
+    f.render_widget(help, chunks[help_chunk]);
 }
 
 fn draw_command_menu(f: &mut Frame, app: &App, area: Rect) {

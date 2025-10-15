@@ -6,8 +6,10 @@ use frankly_fw_update_common::francor::franklyboot::{
     },
     device::Device,
     firmware::hex_file::HexFile,
-    Error,
+    Error, ProgressUpdate,
 };
+use indicatif::{ProgressBar, ProgressStyle};
+use std::sync::{Arc, Mutex};
 
 const SIM_NODE_LST: [u8; 4] = [1, 3, 31, 8];
 
@@ -211,6 +213,7 @@ fn main() {
 pub fn connect_device<I>(
     conn_params: &ComConnParams,
     node_id: Option<u8>,
+    progress_fn: Option<Box<dyn Fn(ProgressUpdate) + Send>>,
 ) -> Result<Device<I>, Error>
 where
     I: ComInterface,
@@ -221,11 +224,7 @@ where
         interface.set_mode(ComMode::Specific(node_id.unwrap()))?;
     }
 
-    // Create device with stdout logger for CLI
-    let mut device = Device::new_with_logger(
-        interface,
-        Some(Box::new(|msg| println!("{}", msg)))
-    );
+    let mut device = Device::new_with_progress(interface, progress_fn);
     device.init()?;
 
     Ok(device)
@@ -243,11 +242,11 @@ where
         };
 
         for node in node_lst {
-            let device = connect_device::<I>(conn_params, Some(node)).unwrap();
+            let device = connect_device::<I>(conn_params, Some(node), None).unwrap();
             println!("Device found[{:3}]: {}", node, device);
         }
     } else {
-        let device = connect_device::<I>(conn_params, None).unwrap();
+        let device = connect_device::<I>(conn_params, None, None).unwrap();
         println!("Device found: {}", device);
     }
 }
@@ -263,7 +262,14 @@ where
         }
     }
 
-    let mut device = connect_device::<I>(conn_params, node_id).unwrap();
+    let progress_fn = Some(Box::new(|update: ProgressUpdate| {
+        match update {
+            ProgressUpdate::Message(msg) => println!("{}", msg),
+            _ => {}
+        }
+    }) as Box<dyn Fn(ProgressUpdate) + Send>);
+
+    let mut device = connect_device::<I>(conn_params, node_id, progress_fn).unwrap();
     println!("Device: {}", device);
     device.reset().unwrap();
 }
@@ -279,7 +285,37 @@ where
         }
     }
 
-    let mut device = connect_device::<I>(conn_params, node_id).unwrap();
+    let pb = Arc::new(Mutex::new(Option::<ProgressBar>::None));
+    let pb_clone = pb.clone();
+
+    let progress_fn = Some(Box::new(move |update: ProgressUpdate| {
+        match update {
+            ProgressUpdate::EraseProgress { current, total } => {
+                let mut pb_lock = pb_clone.lock().unwrap();
+                if pb_lock.is_none() {
+                    let bar = ProgressBar::new(total as u64);
+                    bar.set_style(
+                        ProgressStyle::default_bar()
+                            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                            .unwrap()
+                            .progress_chars("=>-")
+                    );
+                    bar.set_message("Erasing pages");
+                    *pb_lock = Some(bar);
+                }
+                if let Some(ref bar) = *pb_lock {
+                    bar.set_position(current as u64);
+                    if current == total {
+                        bar.finish_with_message("Erase complete");
+                    }
+                }
+            }
+            ProgressUpdate::Message(msg) => println!("{}", msg),
+            _ => {}
+        }
+    }) as Box<dyn Fn(ProgressUpdate) + Send>);
+
+    let mut device = connect_device::<I>(conn_params, node_id, progress_fn).unwrap();
     println!("Device: {}", device);
     device.erase().unwrap();
 }
@@ -295,7 +331,37 @@ where
         }
     }
 
-    let mut device = connect_device::<I>(conn_params, node_id).unwrap();
+    let pb = Arc::new(Mutex::new(Option::<ProgressBar>::None));
+    let pb_clone = pb.clone();
+
+    let progress_fn = Some(Box::new(move |update: ProgressUpdate| {
+        match update {
+            ProgressUpdate::FlashProgress { current, total } => {
+                let mut pb_lock = pb_clone.lock().unwrap();
+                if pb_lock.is_none() {
+                    let bar = ProgressBar::new(total as u64);
+                    bar.set_style(
+                        ProgressStyle::default_bar()
+                            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                            .unwrap()
+                            .progress_chars("=>-")
+                    );
+                    bar.set_message("Flashing pages");
+                    *pb_lock = Some(bar);
+                }
+                if let Some(ref bar) = *pb_lock {
+                    bar.set_position(current as u64);
+                    if current == total {
+                        bar.finish_with_message("Flash complete");
+                    }
+                }
+            }
+            ProgressUpdate::Message(msg) => println!("{}", msg),
+            _ => {}
+        }
+    }) as Box<dyn Fn(ProgressUpdate) + Send>);
+
+    let mut device = connect_device::<I>(conn_params, node_id, progress_fn).unwrap();
     println!("Device: {}", device);
 
     let hex_file = HexFile::from_file(hex_file_path).unwrap();

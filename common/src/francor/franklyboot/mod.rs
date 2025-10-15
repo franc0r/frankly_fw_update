@@ -62,3 +62,23 @@ impl fmt::Display for Error {
         }
     }
 }
+
+// Progress Update --------------------------------------------------------------------------------
+
+///
+/// Progress update enumeration for device operations.
+///
+/// This enumeration is used to report progress during long-running operations
+/// like erasing or flashing firmware.
+///
+#[derive(Debug, Clone)]
+pub enum ProgressUpdate {
+    /// General log message
+    Message(String),
+
+    /// Erase operation progress with current page and total pages
+    EraseProgress { current: u32, total: u32 },
+
+    /// Flash operation progress with current page and total pages
+    FlashProgress { current: u32, total: u32 },
+}

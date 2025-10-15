@@ -3,7 +3,7 @@ use crate::francor::franklyboot::{
     device::{Entry, EntryList, EntryType},
     firmware::{AppFirmware, FirmwareDataInterface},
     flash::FlashDesc,
-    Error,
+    Error, ProgressUpdate,
 };
 use std::fmt;
 
@@ -25,8 +25,8 @@ pub struct Device<I> {
     /// Vector of all entries
     entries: EntryList,
 
-    /// Optional logging callback for progress messages
-    log_fn: Option<Box<dyn Fn(&str) + Send>>,
+    /// Optional progress callback for operation updates
+    progress_fn: Option<Box<dyn Fn(ProgressUpdate) + Send>>,
 }
 
 /// Implementation of the Display trait for the Device struct
@@ -52,19 +52,19 @@ where
 {
     /// Create a new device
     pub fn new(interface: I) -> Self {
-        Self::new_with_logger(interface, None)
+        Self::new_with_progress(interface, None)
     }
 
-    /// Create a new device with a custom logger callback
+    /// Create a new device with a custom progress callback
     ///
-    /// The logger callback will be called for progress messages during operations like
-    /// erase, flash, and reset. If None is provided, no logging will occur.
-    pub fn new_with_logger(interface: I, log_fn: Option<Box<dyn Fn(&str) + Send>>) -> Self {
+    /// The progress callback will be called for progress updates during operations like
+    /// erase, flash, and reset. If None is provided, no progress reporting will occur.
+    pub fn new_with_progress(interface: I, progress_fn: Option<Box<dyn Fn(ProgressUpdate) + Send>>) -> Self {
         let mut device = Self {
             interface: interface,
             flash_desc: FlashDesc::new(0, 0, 0),
             entries: EntryList::new(),
-            log_fn,
+            progress_fn,
         };
 
         device._add_entry(EntryType::Const, RequestType::DevInfoBootloaderVersion);
@@ -145,7 +145,7 @@ where
             .get_entry_mut(RequestType::ResetDevice)
             .exec(&mut self.interface, 0)?;
 
-        self.log("Reset device...");
+        self.progress(ProgressUpdate::Message("Reset device...".to_string()));
 
         Ok(())
     }
@@ -156,18 +156,17 @@ where
     ///
     pub fn erase(&mut self) -> Result<(), Error> {
         let app_section = self.flash_desc.get_section("Application").unwrap();
+        let page_range: Vec<u32> = app_section.get_page_range().collect();
+        let total_pages = page_range.len() as u32;
 
-        for flash_page_id in app_section.get_page_range() {
-            self.log(&format!(
-                "Erasing app pages [Flash-Page: {}/{}]",
-                flash_page_id + 1,
-                self.flash_desc.get_num_pages()
-            ));
+        for (idx, flash_page_id) in page_range.iter().enumerate() {
+            let current = (idx + 1) as u32;
+            self.progress(ProgressUpdate::EraseProgress { current, total: total_pages });
 
             // Erase flash page
             self.entries
                 .get_entry_mut(RequestType::FlashWriteErasePage)
-                .exec(&mut self.interface, flash_page_id)?;
+                .exec(&mut self.interface, *flash_page_id)?;
         }
 
         Ok(())
@@ -187,11 +186,11 @@ where
         let fw_num_pages = (fw_size / app_section.get_page_size()) + 1;
 
         // Print firmware information
-        self.log(&format!(
+        self.progress(ProgressUpdate::Message(format!(
             "Firmware Data: Size: {:#.2} kB Num Pages: {}",
             (fw_size as f32 / 1024.0),
             fw_num_pages
-        ));
+        )));
 
         // TODO add check if firmware is valid and fits into flash
         // Check page id (min limit)
@@ -204,18 +203,18 @@ where
         // Transmit all pages of the firmware to the device
         self._flash_app_pages(&app_fw)?;
 
-        self.log("Checking CRC");
+        self.progress(ProgressUpdate::Message("Checking CRC".to_string()));
         self._check_app_crc(&app_fw)?;
 
-        self.log("Flashing App CRC");
+        self.progress(ProgressUpdate::Message("Flashing App CRC".to_string()));
         self._flash_app_crc(app_fw.get_crc())?;
 
-        self.log("Starting App");
+        self.progress(ProgressUpdate::Message("Starting App".to_string()));
         self.entries
             .get_entry_mut(RequestType::StartApp)
             .exec(&mut self.interface, 0)?;
 
-        self.log("App successfully flashed & started!");
+        self.progress(ProgressUpdate::Message("App successfully flashed & started!".to_string()));
 
         Ok(())
     }
@@ -284,10 +283,10 @@ where
 
     // Private Functions --------------------------------------------------------------------------
 
-    /// Log a progress message if a logger callback is configured
-    fn log(&self, message: &str) {
-        if let Some(ref log_fn) = self.log_fn {
-            log_fn(message);
+    /// Report a progress update if a progress callback is configured
+    fn progress(&self, update: ProgressUpdate) {
+        if let Some(ref progress_fn) = self.progress_fn {
+            progress_fn(update);
         }
     }
 
@@ -306,20 +305,14 @@ where
     }
 
     fn _flash_app_pages(&mut self, app: &AppFirmware) -> Result<(), Error> {
-        let mut page_cnt = 1;
-        for app_page in app.get_page_lst().iter() {
+        let total_pages = app.get_page_lst().len() as u32;
+
+        for (idx, app_page) in app.get_page_lst().iter().enumerate() {
+            let current = (idx + 1) as u32;
+            self.progress(ProgressUpdate::FlashProgress { current, total: total_pages });
+
             let app_section = self.flash_desc.get_section("Application").unwrap();
             let flash_page_id = app_page.get_id() + app_section.get_flash_page_id();
-
-            // Print info
-            self.log(&format!(
-                "Flashing {}. page of {}. [Page: {}/{} | Address: {:#08X}]",
-                page_cnt,
-                app.get_page_lst().len(),
-                flash_page_id + 1,
-                app.get_flash_num_pages(),
-                app_page.get_address()
-            ));
 
             // Clear page buffer
             self.entries
@@ -372,8 +365,6 @@ where
             self.entries
                 .get_entry_mut(RequestType::PageBufferWriteToFlash)
                 .exec(&mut self.interface, flash_page_id)?;
-
-            page_cnt += 1;
         }
 
         Ok(())
@@ -390,11 +381,11 @@ where
 
             // Check if page is used
             if app.get_page(app_page_id).is_none() {
-                self.log(&format!(
+                self.progress(ProgressUpdate::Message(format!(
                     "Erasing unused [Page: {}/{}]",
                     flash_page_id + 1,
                     flash_num_pages
-                ));
+                )));
 
                 // Erase flash page
                 self.entries

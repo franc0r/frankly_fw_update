@@ -10,7 +10,7 @@ use frankly_fw_update_common::francor::franklyboot::{
     },
     device::Device,
     firmware::hex_file::HexFile,
-    Error,
+    Error, ProgressUpdate,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -22,7 +22,9 @@ use ratatui::{
 };
 use std::io;
 use std::fs;
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
 
 const SIM_NODE_LST: [u8; 4] = [1, 3, 31, 8];
 
@@ -58,6 +60,7 @@ enum Screen {
     DeviceList,
     CommandMenu,
     HexFileInput,
+    FileBrowser,
     Executing,
     Results,
 }
@@ -79,6 +82,21 @@ impl Command {
     }
 }
 
+#[derive(Debug)]
+enum OperationMessage {
+    Progress(ProgressUpdate),
+    DeviceInfo(String),
+    Complete,
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+struct FileEntry {
+    name: String,
+    path: PathBuf,
+    is_dir: bool,
+}
+
 struct App {
     current_screen: Screen,
     interface_type_state: ListState,
@@ -96,10 +114,19 @@ struct App {
     result_message: Vec<String>,
     error_message: Option<String>,
     status_message: String,
+    // Progress tracking
+    operation_progress: Option<(u32, u32)>, // (current, total)
+    operation_status: String,
+    operation_receiver: Option<Receiver<OperationMessage>>,
+    // File browser
+    file_browser_current_dir: PathBuf,
+    file_browser_entries: Vec<FileEntry>,
+    file_browser_list_state: ListState,
 }
 
 impl App {
     fn new() -> App {
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut app = App {
             current_screen: Screen::InterfaceTypeSelection,
             interface_type_state: ListState::default(),
@@ -117,6 +144,12 @@ impl App {
             result_message: Vec::new(),
             error_message: None,
             status_message: String::new(),
+            operation_progress: None,
+            operation_status: String::new(),
+            operation_receiver: None,
+            file_browser_current_dir: current_dir,
+            file_browser_entries: Vec::new(),
+            file_browser_list_state: ListState::default(),
         };
         app.interface_type_state.select(Some(0));
         app.command_menu_state.select(Some(0));
@@ -284,6 +317,8 @@ impl App {
     fn execute_command(&mut self) {
         self.result_message.clear();
         self.error_message = None;
+        self.operation_progress = None;
+        self.operation_status = String::new();
 
         let command = match &self.selected_command {
             Some(cmd) => cmd.clone(),
@@ -295,26 +330,215 @@ impl App {
             None => return,
         };
 
+        // Create channel for progress updates
+        let (tx, rx) = channel();
+        self.operation_receiver = Some(rx);
+
+        // Get execution parameters
+        let conn_params = self.get_conn_params();
+        let device_node = self.get_selected_device().and_then(|d| d.node_id);
+        let hex_file_path = self.hex_file_path.clone();
+
+        // Spawn background thread for operation
         match interface_type {
             InterfaceType::Sim => {
                 SIMInterface::config_nodes(SIM_NODE_LST.to_vec()).ok();
                 match command {
-                    Command::Reset => self.reset_device::<SIMInterface>(),
-                    Command::Erase => self.erase_device::<SIMInterface>(),
-                    Command::Flash => self.flash_device::<SIMInterface>(),
+                    Command::Reset => self.spawn_operation::<SIMInterface>(tx, conn_params, device_node, None),
+                    Command::Erase => self.spawn_erase::<SIMInterface>(tx, conn_params, device_node),
+                    Command::Flash => self.spawn_flash::<SIMInterface>(tx, conn_params, device_node, hex_file_path),
                 }
             }
             InterfaceType::Serial => match command {
-                Command::Reset => self.reset_device::<SerialInterface>(),
-                Command::Erase => self.erase_device::<SerialInterface>(),
-                Command::Flash => self.flash_device::<SerialInterface>(),
+                Command::Reset => self.spawn_operation::<SerialInterface>(tx, conn_params, device_node, None),
+                Command::Erase => self.spawn_erase::<SerialInterface>(tx, conn_params, device_node),
+                Command::Flash => self.spawn_flash::<SerialInterface>(tx, conn_params, device_node, hex_file_path),
             },
             InterfaceType::CAN => match command {
-                Command::Reset => self.reset_device::<CANInterface>(),
-                Command::Erase => self.erase_device::<CANInterface>(),
-                Command::Flash => self.flash_device::<CANInterface>(),
+                Command::Reset => self.spawn_operation::<CANInterface>(tx, conn_params, device_node, None),
+                Command::Erase => self.spawn_erase::<CANInterface>(tx, conn_params, device_node),
+                Command::Flash => self.spawn_flash::<CANInterface>(tx, conn_params, device_node, hex_file_path),
             },
         }
+    }
+
+    fn spawn_operation<I: ComInterface + 'static>(
+        &self,
+        tx: Sender<OperationMessage>,
+        conn_params: ComConnParams,
+        node_id: Option<u8>,
+        _hex_file: Option<String>,
+    ) {
+        thread::spawn(move || {
+            // Create progress callback
+            let progress_tx = tx.clone();
+            let progress_fn = Some(Box::new(move |update: ProgressUpdate| {
+                progress_tx.send(OperationMessage::Progress(update)).ok();
+            }) as Box<dyn Fn(ProgressUpdate) + Send>);
+
+            // Connect to device
+            let mut interface = match I::create() {
+                Ok(i) => i,
+                Err(e) => {
+                    tx.send(OperationMessage::Error(format!("Failed to create interface: {:?}", e))).ok();
+                    return;
+                }
+            };
+
+            if let Err(e) = interface.open(&conn_params) {
+                tx.send(OperationMessage::Error(format!("Failed to open interface: {:?}", e))).ok();
+                return;
+            }
+
+            if let Some(node) = node_id {
+                if let Err(e) = interface.set_mode(ComMode::Specific(node)) {
+                    tx.send(OperationMessage::Error(format!("Failed to set node mode: {:?}", e))).ok();
+                    return;
+                }
+            }
+
+            let mut device = Device::new_with_progress(interface, progress_fn);
+            if let Err(e) = device.init() {
+                tx.send(OperationMessage::Error(format!("Failed to initialize device: {:?}", e))).ok();
+                return;
+            }
+
+            // Send device info
+            let device_info = format!("{}", device)
+                .replace('\t', " ")
+                .replace('\r', "")
+                .replace('\n', " ");
+            tx.send(OperationMessage::DeviceInfo(device_info)).ok();
+
+            // Execute reset
+            match device.reset() {
+                Ok(_) => {
+                    tx.send(OperationMessage::Complete).ok();
+                }
+                Err(e) => {
+                    tx.send(OperationMessage::Error(format!("Reset failed: {:?}", e))).ok();
+                }
+            }
+        });
+    }
+
+    fn spawn_erase<I: ComInterface + 'static>(
+        &self,
+        tx: Sender<OperationMessage>,
+        conn_params: ComConnParams,
+        node_id: Option<u8>,
+    ) {
+        thread::spawn(move || {
+            let progress_tx = tx.clone();
+            let progress_fn = Some(Box::new(move |update: ProgressUpdate| {
+                progress_tx.send(OperationMessage::Progress(update)).ok();
+            }) as Box<dyn Fn(ProgressUpdate) + Send>);
+
+            let mut interface = match I::create() {
+                Ok(i) => i,
+                Err(e) => {
+                    tx.send(OperationMessage::Error(format!("Failed to create interface: {:?}", e))).ok();
+                    return;
+                }
+            };
+
+            if let Err(e) = interface.open(&conn_params) {
+                tx.send(OperationMessage::Error(format!("Failed to open interface: {:?}", e))).ok();
+                return;
+            }
+
+            if let Some(node) = node_id {
+                if let Err(e) = interface.set_mode(ComMode::Specific(node)) {
+                    tx.send(OperationMessage::Error(format!("Failed to set node mode: {:?}", e))).ok();
+                    return;
+                }
+            }
+
+            let mut device = Device::new_with_progress(interface, progress_fn);
+            if let Err(e) = device.init() {
+                tx.send(OperationMessage::Error(format!("Failed to initialize device: {:?}", e))).ok();
+                return;
+            }
+
+            let device_info = format!("{}", device)
+                .replace('\t', " ")
+                .replace('\r', "")
+                .replace('\n', " ");
+            tx.send(OperationMessage::DeviceInfo(device_info)).ok();
+
+            match device.erase() {
+                Ok(_) => {
+                    tx.send(OperationMessage::Complete).ok();
+                }
+                Err(e) => {
+                    tx.send(OperationMessage::Error(format!("Erase failed: {:?}", e))).ok();
+                }
+            }
+        });
+    }
+
+    fn spawn_flash<I: ComInterface + 'static>(
+        &self,
+        tx: Sender<OperationMessage>,
+        conn_params: ComConnParams,
+        node_id: Option<u8>,
+        hex_file_path: String,
+    ) {
+        thread::spawn(move || {
+            let hex_file = match HexFile::from_file(&hex_file_path) {
+                Ok(hf) => hf,
+                Err(e) => {
+                    tx.send(OperationMessage::Error(format!("Failed to load hex file: {:?}", e))).ok();
+                    return;
+                }
+            };
+
+            let progress_tx = tx.clone();
+            let progress_fn = Some(Box::new(move |update: ProgressUpdate| {
+                progress_tx.send(OperationMessage::Progress(update)).ok();
+            }) as Box<dyn Fn(ProgressUpdate) + Send>);
+
+            let mut interface = match I::create() {
+                Ok(i) => i,
+                Err(e) => {
+                    tx.send(OperationMessage::Error(format!("Failed to create interface: {:?}", e))).ok();
+                    return;
+                }
+            };
+
+            if let Err(e) = interface.open(&conn_params) {
+                tx.send(OperationMessage::Error(format!("Failed to open interface: {:?}", e))).ok();
+                return;
+            }
+
+            if let Some(node) = node_id {
+                if let Err(e) = interface.set_mode(ComMode::Specific(node)) {
+                    tx.send(OperationMessage::Error(format!("Failed to set node mode: {:?}", e))).ok();
+                    return;
+                }
+            }
+
+            let mut device = Device::new_with_progress(interface, progress_fn);
+            if let Err(e) = device.init() {
+                tx.send(OperationMessage::Error(format!("Failed to initialize device: {:?}", e))).ok();
+                return;
+            }
+
+            let device_info = format!("{}", device)
+                .replace('\t', " ")
+                .replace('\r', "")
+                .replace('\n', " ");
+            tx.send(OperationMessage::DeviceInfo(device_info)).ok();
+
+            match device.flash(&hex_file) {
+                Ok(_) => {
+                    tx.send(OperationMessage::Complete).ok();
+                }
+                Err(e) => {
+                    tx.send(OperationMessage::Error(format!("Flash failed: {:?}", e))).ok();
+                }
+            }
+        });
     }
 
     fn get_selected_device(&self) -> Option<&DiscoveredDevice> {
@@ -335,7 +559,7 @@ impl App {
         &self,
         conn_params: &ComConnParams,
         node_id: Option<u8>,
-        log_fn: Option<Box<dyn Fn(&str) + Send>>,
+        progress_fn: Option<Box<dyn Fn(ProgressUpdate) + Send>>,
     ) -> Result<Device<I>, Error> {
         let mut interface = I::create()?;
         interface.open(conn_params)?;
@@ -343,151 +567,128 @@ impl App {
             interface.set_mode(ComMode::Specific(node))?;
         }
 
-        let mut device = Device::new_with_logger(interface, log_fn);
+        let mut device = Device::new_with_progress(interface, progress_fn);
         device.init()?;
 
         Ok(device)
     }
 
-    fn reset_device<I: ComInterface>(&mut self) {
-        let device = match self.get_selected_device() {
-            Some(d) => d,
-            None => return,
-        };
+    fn process_operation_messages(&mut self) {
+        let mut operation_complete = false;
+        let mut operation_error = None;
 
-        // Create message capture for progress logging
-        let messages = Arc::new(Mutex::new(Vec::new()));
-        let messages_clone = messages.clone();
-
-        let conn_params = self.get_conn_params();
-        let logger = Some(Box::new(move |msg: &str| {
-            messages_clone.lock().unwrap().push(msg.to_string());
-        }) as Box<dyn Fn(&str) + Send>);
-
-        match self.connect_device::<I>(&conn_params, device.node_id, logger) {
-            Ok(mut dev) => {
-                let device_str = format!("{}", dev)
-                    .replace('\t', " ")
-                    .replace('\r', "")
-                    .replace('\n', " ");
-                self.result_message.push(format!("Device: {}", device_str));
-
-                match dev.reset() {
-                    Ok(_) => {
-                        // Add captured progress messages
-                        for msg in messages.lock().unwrap().iter() {
-                            self.result_message.push(msg.clone());
+        if let Some(ref receiver) = self.operation_receiver {
+            // Non-blocking check for messages
+            while let Ok(msg) = receiver.try_recv() {
+                match msg {
+                    OperationMessage::Progress(update) => {
+                        match update {
+                            ProgressUpdate::EraseProgress { current, total } => {
+                                self.operation_progress = Some((current, total));
+                                self.operation_status = format!("Erasing page {}/{}", current, total);
+                            }
+                            ProgressUpdate::FlashProgress { current, total } => {
+                                self.operation_progress = Some((current, total));
+                                self.operation_status = format!("Flashing page {}/{}", current, total);
+                            }
+                            ProgressUpdate::Message(msg) => {
+                                self.operation_status = msg;
+                            }
                         }
-                        self.result_message.push("Device reset successfully".to_string());
                     }
-                    Err(e) => {
-                        self.error_message = Some(format!("Reset failed: {:?}", e));
+                    OperationMessage::DeviceInfo(info) => {
+                        self.result_message.push(format!("Device: {}", info));
+                    }
+                    OperationMessage::Complete => {
+                        self.result_message.push("Operation completed successfully".to_string());
+                        operation_complete = true;
+                    }
+                    OperationMessage::Error(err) => {
+                        operation_error = Some(err);
                     }
                 }
             }
-            Err(e) => {
-                self.error_message = Some(format!("Failed to connect: {:?}", e));
+        }
+
+        // Handle completion after the borrow ends
+        if operation_complete || operation_error.is_some() {
+            self.operation_receiver = None;
+            self.current_screen = Screen::Results;
+            if let Some(err) = operation_error {
+                self.error_message = Some(err);
             }
         }
     }
 
-    fn erase_device<I: ComInterface>(&mut self) {
-        let device = match self.get_selected_device() {
-            Some(d) => d,
-            None => return,
-        };
+    fn populate_file_browser(&mut self) {
+        self.file_browser_entries.clear();
 
-        // Create message capture for progress logging
-        let messages = Arc::new(Mutex::new(Vec::new()));
-        let messages_clone = messages.clone();
+        // Add parent directory entry if not at root
+        if self.file_browser_current_dir.parent().is_some() {
+            self.file_browser_entries.push(FileEntry {
+                name: "..".to_string(),
+                path: self.file_browser_current_dir.parent().unwrap().to_path_buf(),
+                is_dir: true,
+            });
+        }
 
-        let conn_params = self.get_conn_params();
-        let logger = Some(Box::new(move |msg: &str| {
-            messages_clone.lock().unwrap().push(msg.to_string());
-        }) as Box<dyn Fn(&str) + Send>);
+        // Read directory entries
+        if let Ok(entries) = fs::read_dir(&self.file_browser_current_dir) {
+            let mut dirs = Vec::new();
+            let mut files = Vec::new();
 
-        match self.connect_device::<I>(&conn_params, device.node_id, logger) {
-            Ok(mut dev) => {
-                let device_str = format!("{}", dev)
-                    .replace('\t', " ")
-                    .replace('\r', "")
-                    .replace('\n', " ");
-                self.result_message.push(format!("Device: {}", device_str));
+            for entry in entries.flatten() {
+                if let Ok(metadata) = entry.metadata() {
+                    let path = entry.path();
+                    let name = entry.file_name().to_string_lossy().to_string();
 
-                match dev.erase() {
-                    Ok(_) => {
-                        // Add captured progress messages
-                        for msg in messages.lock().unwrap().iter() {
-                            self.result_message.push(msg.clone());
-                        }
-                        self.result_message.push("Application erased successfully".to_string());
+                    // Skip hidden files (starting with .)
+                    if name.starts_with('.') {
+                        continue;
                     }
-                    Err(e) => {
-                        self.error_message = Some(format!("Erase failed: {:?}", e));
+
+                    if metadata.is_dir() {
+                        dirs.push(FileEntry {
+                            name,
+                            path,
+                            is_dir: true,
+                        });
+                    } else if metadata.is_file() {
+                        // Only show .hex files
+                        if path.extension().and_then(|s| s.to_str()) == Some("hex") {
+                            files.push(FileEntry {
+                                name,
+                                path,
+                                is_dir: false,
+                            });
+                        }
                     }
                 }
             }
-            Err(e) => {
-                self.error_message = Some(format!("Failed to connect: {:?}", e));
-            }
+
+            // Sort directories and files alphabetically
+            dirs.sort_by(|a, b| a.name.cmp(&b.name));
+            files.sort_by(|a, b| a.name.cmp(&b.name));
+
+            // Add directories first, then files
+            self.file_browser_entries.extend(dirs);
+            self.file_browser_entries.extend(files);
+        }
+
+        // Select first entry
+        if !self.file_browser_entries.is_empty() {
+            self.file_browser_list_state.select(Some(0));
+        } else {
+            self.file_browser_list_state.select(None);
         }
     }
 
-    fn flash_device<I: ComInterface>(&mut self) {
-        let device = match self.get_selected_device() {
-            Some(d) => d,
-            None => return,
-        };
-
-        if self.hex_file_path.is_empty() {
-            self.error_message = Some("Hex file path required".to_string());
-            return;
-        }
-
-        let hex_file = match HexFile::from_file(&self.hex_file_path) {
-            Ok(hf) => hf,
-            Err(e) => {
-                self.error_message = Some(format!("Failed to load hex file: {:?}", e));
-                return;
-            }
-        };
-
-        // Create message capture for progress logging
-        let messages = Arc::new(Mutex::new(Vec::new()));
-        let messages_clone = messages.clone();
-
-        let conn_params = self.get_conn_params();
-        let logger = Some(Box::new(move |msg: &str| {
-            messages_clone.lock().unwrap().push(msg.to_string());
-        }) as Box<dyn Fn(&str) + Send>);
-
-        match self.connect_device::<I>(&conn_params, device.node_id, logger) {
-            Ok(mut dev) => {
-                let device_str = format!("{}", dev)
-                    .replace('\t', " ")
-                    .replace('\r', "")
-                    .replace('\n', " ");
-                self.result_message.push(format!("Device: {}", device_str));
-                self.result_message.push("Flashing firmware...".to_string());
-
-                match dev.flash(&hex_file) {
-                    Ok(_) => {
-                        // Add captured progress messages
-                        for msg in messages.lock().unwrap().iter() {
-                            self.result_message.push(msg.clone());
-                        }
-                        self.result_message.push("Firmware flashed successfully".to_string());
-                    }
-                    Err(e) => {
-                        self.error_message = Some(format!("Flash failed: {:?}", e));
-                    }
-                }
-            }
-            Err(e) => {
-                self.error_message = Some(format!("Failed to connect: {:?}", e));
-            }
-        }
+    fn enter_file_browser(&mut self) {
+        // Start from current working directory
+        self.file_browser_current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        self.populate_file_browser();
     }
+
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -523,25 +724,32 @@ fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> io::Result<()> {
     loop {
+        // Process background operation messages
+        app.process_operation_messages();
+
         terminal.draw(|f| ui(f, app))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                match app.current_screen {
-                    Screen::InterfaceTypeSelection => handle_interface_type_selection(app, key.code),
-                    Screen::InterfaceSelection => handle_interface_selection(app, key.code),
-                    Screen::Searching => {} // No input during search
-                    Screen::DeviceList => handle_device_list(app, key.code),
-                    Screen::CommandMenu => handle_command_menu(app, key.code),
-                    Screen::HexFileInput => handle_hex_file_input(app, key.code),
-                    Screen::Executing => {} // No input during execution
-                    Screen::Results => handle_results(app, key.code),
-                }
+        // Use poll with timeout for responsive UI updates
+        if crossterm::event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match app.current_screen {
+                        Screen::InterfaceTypeSelection => handle_interface_type_selection(app, key.code),
+                        Screen::InterfaceSelection => handle_interface_selection(app, key.code),
+                        Screen::Searching => {} // No input during search
+                        Screen::DeviceList => handle_device_list(app, key.code),
+                        Screen::CommandMenu => handle_command_menu(app, key.code),
+                        Screen::HexFileInput => handle_hex_file_input(app, key.code),
+                        Screen::FileBrowser => handle_file_browser(app, key.code),
+                        Screen::Executing => {} // No input during execution
+                        Screen::Results => handle_results(app, key.code),
+                    }
 
-                // Global quit
-                if let KeyCode::Char('q') = key.code {
-                    if !app.hex_file_input_mode {
-                        return Ok(());
+                    // Global quit
+                    if let KeyCode::Char('q') = key.code {
+                        if !app.hex_file_input_mode {
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -684,7 +892,6 @@ fn handle_command_menu(app: &mut App, key: KeyCode) {
             } else {
                 app.current_screen = Screen::Executing;
                 app.execute_command();
-                app.current_screen = Screen::Results;
             }
         }
         KeyCode::Esc => {
@@ -697,10 +904,17 @@ fn handle_command_menu(app: &mut App, key: KeyCode) {
 fn handle_hex_file_input(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Enter => {
+            if !app.hex_file_path.is_empty() {
+                app.hex_file_input_mode = false;
+                app.current_screen = Screen::Executing;
+                app.execute_command();
+            }
+        }
+        KeyCode::Tab => {
+            // Switch to file browser
             app.hex_file_input_mode = false;
-            app.current_screen = Screen::Executing;
-            app.execute_command();
-            app.current_screen = Screen::Results;
+            app.enter_file_browser();
+            app.current_screen = Screen::FileBrowser;
         }
         KeyCode::Char(c) => {
             app.hex_file_path.push(c);
@@ -712,6 +926,48 @@ fn handle_hex_file_input(app: &mut App, key: KeyCode) {
             app.hex_file_input_mode = false;
             app.hex_file_path.clear();
             app.current_screen = Screen::CommandMenu;
+        }
+        _ => {}
+    }
+}
+
+fn handle_file_browser(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Down => {
+            let max_idx = app.file_browser_entries.len().saturating_sub(1);
+            let i = match app.file_browser_list_state.selected() {
+                Some(i) => if i >= max_idx { 0 } else { i + 1 },
+                None => 0,
+            };
+            app.file_browser_list_state.select(Some(i));
+        }
+        KeyCode::Up => {
+            let max_idx = app.file_browser_entries.len().saturating_sub(1);
+            let i = match app.file_browser_list_state.selected() {
+                Some(i) => if i == 0 { max_idx } else { i - 1 },
+                None => 0,
+            };
+            app.file_browser_list_state.select(Some(i));
+        }
+        KeyCode::Enter => {
+            if let Some(idx) = app.file_browser_list_state.selected() {
+                if let Some(entry) = app.file_browser_entries.get(idx).cloned() {
+                    if entry.is_dir {
+                        // Navigate into directory
+                        app.file_browser_current_dir = entry.path;
+                        app.populate_file_browser();
+                    } else {
+                        // Select file
+                        app.hex_file_path = entry.path.to_string_lossy().to_string();
+                        app.current_screen = Screen::Executing;
+                        app.execute_command();
+                    }
+                }
+            }
+        }
+        KeyCode::Esc => {
+            app.current_screen = Screen::HexFileInput;
+            app.hex_file_input_mode = true;
         }
         _ => {}
     }
@@ -739,6 +995,7 @@ fn ui(f: &mut Frame, app: &App) {
         Screen::DeviceList => draw_device_list(f, app, size),
         Screen::CommandMenu => draw_command_menu(f, app, size),
         Screen::HexFileInput => draw_hex_file_input(f, app, size),
+        Screen::FileBrowser => draw_file_browser(f, app, size),
         Screen::Executing => draw_executing(f, app, size),
         Screen::Results => draw_results(f, app, size),
     }
@@ -977,13 +1234,79 @@ fn draw_hex_file_input(f: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().title("Firmware Hex File Path").borders(Borders::ALL));
     f.render_widget(input, chunks[1]);
 
-    let help_text = Paragraph::new("Enter the full path to the firmware hex file.\nExample: data/example_app_g431rb.hex")
+    let help_text = Paragraph::new("Enter the full path to the firmware hex file.\nExample: data/example_app_g431rb.hex\n\nOr press Tab to open the file browser.")
         .style(Style::default().fg(Color::Gray))
         .wrap(Wrap { trim: true })
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(help_text, chunks[2]);
 
-    let help = Paragraph::new("Type file path, Enter to flash, Esc to cancel")
+    let help = Paragraph::new("Type path | Tab for browser | Enter to flash | Esc to cancel")
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(help, chunks[3]);
+}
+
+fn draw_file_browser(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+    let title = Paragraph::new("Browse for Hex File")
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(title, chunks[0]);
+
+    let current_path = app.file_browser_current_dir.to_string_lossy().to_string();
+    let path_display = Paragraph::new(current_path)
+        .style(Style::default().fg(Color::Green))
+        .block(Block::default().title("Current Directory").borders(Borders::ALL));
+    f.render_widget(path_display, chunks[1]);
+
+    let items: Vec<ListItem> = app.file_browser_entries
+        .iter()
+        .map(|entry| {
+            let display = if entry.is_dir {
+                format!("[DIR]  {}/", entry.name)
+            } else {
+                format!("[FILE] {}", entry.name)
+            };
+            let style = if entry.is_dir {
+                Style::default().fg(Color::Blue)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+            ListItem::new(display).style(style)
+        })
+        .collect();
+
+    let list_title = if app.file_browser_entries.is_empty() {
+        "No .hex files found in this directory"
+    } else {
+        "Files and Directories (only .hex files shown)"
+    };
+
+    let list = List::new(items)
+        .block(Block::default().title(list_title).borders(Borders::ALL))
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
+
+    let mut state = app.file_browser_list_state.clone();
+    f.render_stateful_widget(list, chunks[2], &mut state);
+
+    let help = Paragraph::new("↑↓ to navigate | Enter to select/open | Esc to go back to manual entry")
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
@@ -1010,7 +1333,7 @@ fn draw_executing(f: &mut Frame, app: &App, area: Rect) {
     let device = app.get_selected_device();
     let device_name = device.map(|d| d.display_name.as_str()).unwrap_or("Unknown");
 
-    let info = Paragraph::new(vec![
+    let mut info_lines = vec![
         Line::from(vec![
             Span::styled("Device: ", Style::default().fg(Color::Green)),
             Span::raw(device_name),
@@ -1020,10 +1343,41 @@ fn draw_executing(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(command_name),
         ]),
         Line::from(""),
-        Line::from(Span::styled("Please wait...", Style::default().fg(Color::Yellow))),
-    ])
-    .block(Block::default().borders(Borders::ALL))
-    .wrap(Wrap { trim: true });
+    ];
+
+    // Show progress bar if available
+    if let Some((current, total)) = app.operation_progress {
+        let percentage = (current as f32 / total as f32 * 100.0) as u32;
+
+        // Create simple text-based progress bar
+        let bar_width = 40;
+        let filled = (bar_width as f32 * current as f32 / total as f32) as usize;
+        let empty = bar_width - filled;
+        let bar = format!("[{}{}]", "=".repeat(filled), "-".repeat(empty));
+
+        info_lines.push(Line::from(vec![
+            Span::styled("Progress: ", Style::default().fg(Color::Cyan)),
+            Span::styled(bar, Style::default().fg(Color::Green)),
+        ]));
+        info_lines.push(Line::from(vec![
+            Span::raw(format!("          {}/{} pages ({}%)", current, total, percentage)),
+        ]));
+    }
+
+    if !app.operation_status.is_empty() {
+        info_lines.push(Line::from(""));
+        info_lines.push(Line::from(Span::styled(
+            &app.operation_status,
+            Style::default().fg(Color::Yellow),
+        )));
+    } else {
+        info_lines.push(Line::from(""));
+        info_lines.push(Line::from(Span::styled("Please wait...", Style::default().fg(Color::Yellow))));
+    }
+
+    let info = Paragraph::new(info_lines)
+        .block(Block::default().borders(Borders::ALL))
+        .wrap(Wrap { trim: true });
     f.render_widget(info, chunks[1]);
 }
 

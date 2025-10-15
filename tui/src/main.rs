@@ -118,6 +118,8 @@ struct App {
     selected_command: Option<Command>,
     hex_file_path: String,
     hex_file_input_mode: bool,
+    hex_file_history: Vec<String>,
+    hex_file_history_index: Option<usize>,
     result_message: Vec<String>,
     error_message: Option<String>,
     device_list_refresh_message: Option<String>,
@@ -151,6 +153,8 @@ impl App {
             selected_command: None,
             hex_file_path: String::new(),
             hex_file_input_mode: false,
+            hex_file_history: Vec::new(),
+            hex_file_history_index: None,
             result_message: Vec::new(),
             error_message: None,
             device_list_refresh_message: None,
@@ -215,6 +219,27 @@ impl App {
         }
     }
 
+    fn add_to_hex_file_history(&mut self, path: String) {
+        // Don't add empty paths or duplicates at the front
+        if path.is_empty() {
+            return;
+        }
+
+        // Remove the path if it already exists
+        self.hex_file_history.retain(|p| p != &path);
+
+        // Add to the front of history
+        self.hex_file_history.insert(0, path);
+
+        // Limit history to 10 entries
+        if self.hex_file_history.len() > 10 {
+            self.hex_file_history.truncate(10);
+        }
+
+        // Reset history index when adding new item
+        self.hex_file_history_index = None;
+    }
+
     fn execute_command(&mut self) {
         self.result_message.clear();
         self.error_message = None;
@@ -230,6 +255,11 @@ impl App {
             Some(it) => it.clone(),
             None => return,
         };
+
+        // Add hex file path to history if this is a flash command
+        if matches!(command, Command::Flash) && !self.hex_file_path.is_empty() {
+            self.add_to_hex_file_history(self.hex_file_path.clone());
+        }
 
         // Create channel for progress updates
         let (tx, rx) = channel();
@@ -977,9 +1007,47 @@ fn handle_command_menu(app: &mut App, key: KeyCode) {
 
 fn handle_hex_file_input(app: &mut App, key: KeyCode) {
     match key {
+        KeyCode::Up => {
+            // Navigate to older history
+            if !app.hex_file_history.is_empty() {
+                let new_index = match app.hex_file_history_index {
+                    None => 0,
+                    Some(idx) => {
+                        if idx + 1 < app.hex_file_history.len() {
+                            idx + 1
+                        } else {
+                            idx
+                        }
+                    }
+                };
+                app.hex_file_history_index = Some(new_index);
+                if let Some(path) = app.hex_file_history.get(new_index) {
+                    app.hex_file_path = path.clone();
+                }
+            }
+        }
+        KeyCode::Down => {
+            // Navigate to newer history
+            match app.hex_file_history_index {
+                None => {}
+                Some(0) => {
+                    // At most recent, clear to allow manual entry
+                    app.hex_file_history_index = None;
+                    app.hex_file_path.clear();
+                }
+                Some(idx) => {
+                    let new_index = idx - 1;
+                    app.hex_file_history_index = Some(new_index);
+                    if let Some(path) = app.hex_file_history.get(new_index) {
+                        app.hex_file_path = path.clone();
+                    }
+                }
+            }
+        }
         KeyCode::Enter => {
             if !app.hex_file_path.is_empty() {
                 app.hex_file_input_mode = false;
+                app.hex_file_history_index = None;
                 app.current_screen = Screen::Executing;
                 app.execute_command();
             }
@@ -987,18 +1055,24 @@ fn handle_hex_file_input(app: &mut App, key: KeyCode) {
         KeyCode::Tab => {
             // Switch to file browser
             app.hex_file_input_mode = false;
+            app.hex_file_history_index = None;
             app.enter_file_browser();
             app.current_screen = Screen::FileBrowser;
         }
         KeyCode::Char(c) => {
+            // Clear history index when typing
+            app.hex_file_history_index = None;
             app.hex_file_path.push(c);
         }
         KeyCode::Backspace => {
+            // Clear history index when editing
+            app.hex_file_history_index = None;
             app.hex_file_path.pop();
         }
         KeyCode::Esc => {
             app.hex_file_input_mode = false;
             app.hex_file_path.clear();
+            app.hex_file_history_index = None;
             app.current_screen = Screen::CommandMenu;
         }
         _ => {}
@@ -1359,22 +1433,46 @@ fn draw_hex_file_input(f: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
 
+    // Show input with history indicator
+    let input_title = if !app.hex_file_history.is_empty() {
+        let history_info = match app.hex_file_history_index {
+            Some(idx) => format!("Firmware Hex File Path [History {}/{}]", idx + 1, app.hex_file_history.len()),
+            None => format!("Firmware Hex File Path [History: {} entries]", app.hex_file_history.len()),
+        };
+        history_info
+    } else {
+        "Firmware Hex File Path".to_string()
+    };
+
     let input = Paragraph::new(app.hex_file_path.as_str())
         .style(Style::default().fg(Color::Yellow))
-        .block(Block::default().title("Firmware Hex File Path").borders(Borders::ALL));
+        .block(Block::default().title(input_title).borders(Borders::ALL));
     f.render_widget(input, chunks[1]);
 
-    let help_text = Paragraph::new("Enter the full path to the firmware hex file.\nExample: data/example_app_g431rb.hex\n\nOr press Tab to open the file browser.")
+    // Update help text to mention history navigation if available
+    let help_text_content = if !app.hex_file_history.is_empty() {
+        "Enter the full path to the firmware hex file.\nExample: data/example_app_g431rb.hex\n\nPress Tab to open the file browser.\nUse ↑↓ arrows to navigate through previously used firmware files."
+    } else {
+        "Enter the full path to the firmware hex file.\nExample: data/example_app_g431rb.hex\n\nOr press Tab to open the file browser."
+    };
+
+    let help_text = Paragraph::new(help_text_content)
         .style(Style::default().fg(Color::Gray))
         .wrap(Wrap { trim: true })
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(help_text, chunks[2]);
 
-    let help = Paragraph::new("Type path | Tab for browser | Enter to flash | Esc to cancel")
+    let help = if !app.hex_file_history.is_empty() {
+        Paragraph::new("Type path | ↑↓ for history | Tab for browser | Enter to flash | Esc to cancel")
+    } else {
+        Paragraph::new("Type path | Tab for browser | Enter to flash | Esc to cancel")
+    };
+
+    let help_final = help
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
-    f.render_widget(help, chunks[3]);
+    f.render_widget(help_final, chunks[3]);
 }
 
 fn draw_file_browser(f: &mut Frame, app: &App, area: Rect) {

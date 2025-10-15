@@ -93,7 +93,7 @@ The TUI provides an interactive, menu-driven experience with:
 - **Results Display**: View operation results with color-coded success/error messages
 
 ### TUI Navigation
-- **↑↓**: Navigate menu options
+- **↑↓**: Navigate menu options / Navigate firmware path history (when entering hex file path)
 - **Enter**: Select/confirm
 - **Tab**: Open file browser (when entering hex file path)
 - **F5**: Refresh device list (rescan for devices on current interface)
@@ -109,6 +109,16 @@ When selecting a hex file for flashing:
 - Press **Esc** to return to manual path entry
 - Only .hex files and directories are shown (hidden files are filtered out)
 - Files are color-coded: directories in blue, .hex files in green
+
+### Firmware Path History
+When entering a hex file path manually:
+- The TUI automatically stores the last 10 firmware file paths used for flashing
+- Press **↑** arrow to navigate to older paths in history
+- Press **↓** arrow to navigate to newer paths in history
+- The input field title shows `[History X/Y]` when browsing history
+- Typing or editing clears the history navigation and allows manual entry
+- This feature simplifies updating multiple devices with the same firmware
+- History is maintained during the current TUI session
 
 ### TUI Implementation
 - Built with [ratatui](https://github.com/ratatui/ratatui) v0.29

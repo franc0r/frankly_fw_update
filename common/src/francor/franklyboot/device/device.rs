@@ -59,7 +59,10 @@ where
     ///
     /// The progress callback will be called for progress updates during operations like
     /// erase, flash, and reset. If None is provided, no progress reporting will occur.
-    pub fn new_with_progress(interface: I, progress_fn: Option<Box<dyn Fn(ProgressUpdate) + Send>>) -> Self {
+    pub fn new_with_progress(
+        interface: I,
+        progress_fn: Option<Box<dyn Fn(ProgressUpdate) + Send>>,
+    ) -> Self {
         let mut device = Self {
             interface: interface,
             flash_desc: FlashDesc::new(0, 0, 0),
@@ -161,7 +164,10 @@ where
 
         for (idx, flash_page_id) in page_range.iter().enumerate() {
             let current = (idx + 1) as u32;
-            self.progress(ProgressUpdate::EraseProgress { current, total: total_pages });
+            self.progress(ProgressUpdate::EraseProgress {
+                current,
+                total: total_pages,
+            });
 
             // Erase flash page
             self.entries
@@ -214,7 +220,9 @@ where
             .get_entry_mut(RequestType::StartApp)
             .exec(&mut self.interface, 0)?;
 
-        self.progress(ProgressUpdate::Message("App successfully flashed & started!".to_string()));
+        self.progress(ProgressUpdate::Message(
+            "App successfully flashed & started!".to_string(),
+        ));
 
         Ok(())
     }
@@ -309,7 +317,10 @@ where
 
         for (idx, app_page) in app.get_page_lst().iter().enumerate() {
             let current = (idx + 1) as u32;
-            self.progress(ProgressUpdate::FlashProgress { current, total: total_pages });
+            self.progress(ProgressUpdate::FlashProgress {
+                current,
+                total: total_pages,
+            });
 
             let app_section = self.flash_desc.get_section("Application").unwrap();
             let flash_page_id = app_page.get_id() + app_section.get_flash_page_id();

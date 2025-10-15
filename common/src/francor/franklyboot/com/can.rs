@@ -1,4 +1,6 @@
-use socketcan::{CanFilter, CanFrame, CanSocket, EmbeddedFrame, Frame, Socket, SocketOptions, StandardId};
+use socketcan::{
+    CanFilter, CanFrame, CanSocket, EmbeddedFrame, Frame, Socket, SocketOptions, StandardId,
+};
 use std::time::Duration;
 
 use crate::francor::franklyboot::{
@@ -35,14 +37,7 @@ impl CANInterface {
     fn can_frame_to_msg(can_frame: &socketcan::frame::CanDataFrame) -> Msg {
         let data = can_frame.data();
         let msg_data = [
-            data[0],
-            data[1],
-            data[2],
-            data[3],
-            data[4],
-            data[5],
-            data[6],
-            data[7],
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ];
 
         return Msg::from_raw_data_array(&msg_data);

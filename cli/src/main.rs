@@ -262,11 +262,9 @@ where
         }
     }
 
-    let progress_fn = Some(Box::new(|update: ProgressUpdate| {
-        match update {
-            ProgressUpdate::Message(msg) => println!("{}", msg),
-            _ => {}
-        }
+    let progress_fn = Some(Box::new(|update: ProgressUpdate| match update {
+        ProgressUpdate::Message(msg) => println!("{}", msg),
+        _ => {}
     }) as Box<dyn Fn(ProgressUpdate) + Send>);
 
     let mut device = connect_device::<I>(conn_params, node_id, progress_fn).unwrap();
@@ -288,31 +286,29 @@ where
     let pb = Arc::new(Mutex::new(Option::<ProgressBar>::None));
     let pb_clone = pb.clone();
 
-    let progress_fn = Some(Box::new(move |update: ProgressUpdate| {
-        match update {
-            ProgressUpdate::EraseProgress { current, total } => {
-                let mut pb_lock = pb_clone.lock().unwrap();
-                if pb_lock.is_none() {
-                    let bar = ProgressBar::new(total as u64);
-                    bar.set_style(
-                        ProgressStyle::default_bar()
-                            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-                            .unwrap()
-                            .progress_chars("=>-")
-                    );
-                    bar.set_message("Erasing pages");
-                    *pb_lock = Some(bar);
-                }
-                if let Some(ref bar) = *pb_lock {
-                    bar.set_position(current as u64);
-                    if current == total {
-                        bar.finish_with_message("Erase complete");
-                    }
+    let progress_fn = Some(Box::new(move |update: ProgressUpdate| match update {
+        ProgressUpdate::EraseProgress { current, total } => {
+            let mut pb_lock = pb_clone.lock().unwrap();
+            if pb_lock.is_none() {
+                let bar = ProgressBar::new(total as u64);
+                bar.set_style(
+                    ProgressStyle::default_bar()
+                        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                        .unwrap()
+                        .progress_chars("=>-"),
+                );
+                bar.set_message("Erasing pages");
+                *pb_lock = Some(bar);
+            }
+            if let Some(ref bar) = *pb_lock {
+                bar.set_position(current as u64);
+                if current == total {
+                    bar.finish_with_message("Erase complete");
                 }
             }
-            ProgressUpdate::Message(msg) => println!("{}", msg),
-            _ => {}
         }
+        ProgressUpdate::Message(msg) => println!("{}", msg),
+        _ => {}
     }) as Box<dyn Fn(ProgressUpdate) + Send>);
 
     let mut device = connect_device::<I>(conn_params, node_id, progress_fn).unwrap();
@@ -334,31 +330,29 @@ where
     let pb = Arc::new(Mutex::new(Option::<ProgressBar>::None));
     let pb_clone = pb.clone();
 
-    let progress_fn = Some(Box::new(move |update: ProgressUpdate| {
-        match update {
-            ProgressUpdate::FlashProgress { current, total } => {
-                let mut pb_lock = pb_clone.lock().unwrap();
-                if pb_lock.is_none() {
-                    let bar = ProgressBar::new(total as u64);
-                    bar.set_style(
-                        ProgressStyle::default_bar()
-                            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-                            .unwrap()
-                            .progress_chars("=>-")
-                    );
-                    bar.set_message("Flashing pages");
-                    *pb_lock = Some(bar);
-                }
-                if let Some(ref bar) = *pb_lock {
-                    bar.set_position(current as u64);
-                    if current == total {
-                        bar.finish_with_message("Flash complete");
-                    }
+    let progress_fn = Some(Box::new(move |update: ProgressUpdate| match update {
+        ProgressUpdate::FlashProgress { current, total } => {
+            let mut pb_lock = pb_clone.lock().unwrap();
+            if pb_lock.is_none() {
+                let bar = ProgressBar::new(total as u64);
+                bar.set_style(
+                    ProgressStyle::default_bar()
+                        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                        .unwrap()
+                        .progress_chars("=>-"),
+                );
+                bar.set_message("Flashing pages");
+                *pb_lock = Some(bar);
+            }
+            if let Some(ref bar) = *pb_lock {
+                bar.set_position(current as u64);
+                if current == total {
+                    bar.finish_with_message("Flash complete");
                 }
             }
-            ProgressUpdate::Message(msg) => println!("{}", msg),
-            _ => {}
         }
+        ProgressUpdate::Message(msg) => println!("{}", msg),
+        _ => {}
     }) as Box<dyn Fn(ProgressUpdate) + Send>);
 
     let mut device = connect_device::<I>(conn_params, node_id, progress_fn).unwrap();

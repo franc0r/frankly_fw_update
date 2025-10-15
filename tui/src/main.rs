@@ -20,8 +20,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
-use std::io;
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -275,20 +275,37 @@ impl App {
             InterfaceType::Sim => {
                 SIMInterface::config_nodes(SIM_NODE_LST.to_vec()).ok();
                 match command {
-                    Command::Reset => self.spawn_operation::<SIMInterface>(tx, conn_params, device_node, None),
-                    Command::Erase => self.spawn_erase::<SIMInterface>(tx, conn_params, device_node),
-                    Command::Flash => self.spawn_flash::<SIMInterface>(tx, conn_params, device_node, hex_file_path),
+                    Command::Reset => {
+                        self.spawn_operation::<SIMInterface>(tx, conn_params, device_node, None)
+                    }
+                    Command::Erase => {
+                        self.spawn_erase::<SIMInterface>(tx, conn_params, device_node)
+                    }
+                    Command::Flash => self.spawn_flash::<SIMInterface>(
+                        tx,
+                        conn_params,
+                        device_node,
+                        hex_file_path,
+                    ),
                 }
             }
             InterfaceType::Serial => match command {
-                Command::Reset => self.spawn_operation::<SerialInterface>(tx, conn_params, device_node, None),
+                Command::Reset => {
+                    self.spawn_operation::<SerialInterface>(tx, conn_params, device_node, None)
+                }
                 Command::Erase => self.spawn_erase::<SerialInterface>(tx, conn_params, device_node),
-                Command::Flash => self.spawn_flash::<SerialInterface>(tx, conn_params, device_node, hex_file_path),
+                Command::Flash => {
+                    self.spawn_flash::<SerialInterface>(tx, conn_params, device_node, hex_file_path)
+                }
             },
             InterfaceType::CAN => match command {
-                Command::Reset => self.spawn_operation::<CANInterface>(tx, conn_params, device_node, None),
+                Command::Reset => {
+                    self.spawn_operation::<CANInterface>(tx, conn_params, device_node, None)
+                }
                 Command::Erase => self.spawn_erase::<CANInterface>(tx, conn_params, device_node),
-                Command::Flash => self.spawn_flash::<CANInterface>(tx, conn_params, device_node, hex_file_path),
+                Command::Flash => {
+                    self.spawn_flash::<CANInterface>(tx, conn_params, device_node, hex_file_path)
+                }
             },
         }
     }
@@ -311,26 +328,42 @@ impl App {
             let mut interface = match I::create() {
                 Ok(i) => i,
                 Err(e) => {
-                    tx.send(OperationMessage::Error(format!("Failed to create interface: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!(
+                        "Failed to create interface: {:?}",
+                        e
+                    )))
+                    .ok();
                     return;
                 }
             };
 
             if let Err(e) = interface.open(&conn_params) {
-                tx.send(OperationMessage::Error(format!("Failed to open interface: {:?}", e))).ok();
+                tx.send(OperationMessage::Error(format!(
+                    "Failed to open interface: {:?}",
+                    e
+                )))
+                .ok();
                 return;
             }
 
             if let Some(node) = node_id {
                 if let Err(e) = interface.set_mode(ComMode::Specific(node)) {
-                    tx.send(OperationMessage::Error(format!("Failed to set node mode: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!(
+                        "Failed to set node mode: {:?}",
+                        e
+                    )))
+                    .ok();
                     return;
                 }
             }
 
             let mut device = Device::new_with_progress(interface, progress_fn);
             if let Err(e) = device.init() {
-                tx.send(OperationMessage::Error(format!("Failed to initialize device: {:?}", e))).ok();
+                tx.send(OperationMessage::Error(format!(
+                    "Failed to initialize device: {:?}",
+                    e
+                )))
+                .ok();
                 return;
             }
 
@@ -347,7 +380,8 @@ impl App {
                     tx.send(OperationMessage::Complete).ok();
                 }
                 Err(e) => {
-                    tx.send(OperationMessage::Error(format!("Reset failed: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!("Reset failed: {:?}", e)))
+                        .ok();
                 }
             }
         });
@@ -368,26 +402,42 @@ impl App {
             let mut interface = match I::create() {
                 Ok(i) => i,
                 Err(e) => {
-                    tx.send(OperationMessage::Error(format!("Failed to create interface: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!(
+                        "Failed to create interface: {:?}",
+                        e
+                    )))
+                    .ok();
                     return;
                 }
             };
 
             if let Err(e) = interface.open(&conn_params) {
-                tx.send(OperationMessage::Error(format!("Failed to open interface: {:?}", e))).ok();
+                tx.send(OperationMessage::Error(format!(
+                    "Failed to open interface: {:?}",
+                    e
+                )))
+                .ok();
                 return;
             }
 
             if let Some(node) = node_id {
                 if let Err(e) = interface.set_mode(ComMode::Specific(node)) {
-                    tx.send(OperationMessage::Error(format!("Failed to set node mode: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!(
+                        "Failed to set node mode: {:?}",
+                        e
+                    )))
+                    .ok();
                     return;
                 }
             }
 
             let mut device = Device::new_with_progress(interface, progress_fn);
             if let Err(e) = device.init() {
-                tx.send(OperationMessage::Error(format!("Failed to initialize device: {:?}", e))).ok();
+                tx.send(OperationMessage::Error(format!(
+                    "Failed to initialize device: {:?}",
+                    e
+                )))
+                .ok();
                 return;
             }
 
@@ -402,7 +452,8 @@ impl App {
                     tx.send(OperationMessage::Complete).ok();
                 }
                 Err(e) => {
-                    tx.send(OperationMessage::Error(format!("Erase failed: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!("Erase failed: {:?}", e)))
+                        .ok();
                 }
             }
         });
@@ -419,7 +470,11 @@ impl App {
             let hex_file = match HexFile::from_file(&hex_file_path) {
                 Ok(hf) => hf,
                 Err(e) => {
-                    tx.send(OperationMessage::Error(format!("Failed to load hex file: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!(
+                        "Failed to load hex file: {:?}",
+                        e
+                    )))
+                    .ok();
                     return;
                 }
             };
@@ -432,26 +487,42 @@ impl App {
             let mut interface = match I::create() {
                 Ok(i) => i,
                 Err(e) => {
-                    tx.send(OperationMessage::Error(format!("Failed to create interface: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!(
+                        "Failed to create interface: {:?}",
+                        e
+                    )))
+                    .ok();
                     return;
                 }
             };
 
             if let Err(e) = interface.open(&conn_params) {
-                tx.send(OperationMessage::Error(format!("Failed to open interface: {:?}", e))).ok();
+                tx.send(OperationMessage::Error(format!(
+                    "Failed to open interface: {:?}",
+                    e
+                )))
+                .ok();
                 return;
             }
 
             if let Some(node) = node_id {
                 if let Err(e) = interface.set_mode(ComMode::Specific(node)) {
-                    tx.send(OperationMessage::Error(format!("Failed to set node mode: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!(
+                        "Failed to set node mode: {:?}",
+                        e
+                    )))
+                    .ok();
                     return;
                 }
             }
 
             let mut device = Device::new_with_progress(interface, progress_fn);
             if let Err(e) = device.init() {
-                tx.send(OperationMessage::Error(format!("Failed to initialize device: {:?}", e))).ok();
+                tx.send(OperationMessage::Error(format!(
+                    "Failed to initialize device: {:?}",
+                    e
+                )))
+                .ok();
                 return;
             }
 
@@ -466,7 +537,8 @@ impl App {
                     tx.send(OperationMessage::Complete).ok();
                 }
                 Err(e) => {
-                    tx.send(OperationMessage::Error(format!("Flash failed: {:?}", e))).ok();
+                    tx.send(OperationMessage::Error(format!("Flash failed: {:?}", e)))
+                        .ok();
                 }
             }
         });
@@ -494,26 +566,25 @@ impl App {
             // Non-blocking check for messages
             while let Ok(msg) = receiver.try_recv() {
                 match msg {
-                    OperationMessage::Progress(update) => {
-                        match update {
-                            ProgressUpdate::EraseProgress { current, total } => {
-                                self.operation_progress = Some((current, total));
-                                self.operation_status = format!("Erasing page {}/{}", current, total);
-                            }
-                            ProgressUpdate::FlashProgress { current, total } => {
-                                self.operation_progress = Some((current, total));
-                                self.operation_status = format!("Flashing page {}/{}", current, total);
-                            }
-                            ProgressUpdate::Message(msg) => {
-                                self.operation_status = msg;
-                            }
+                    OperationMessage::Progress(update) => match update {
+                        ProgressUpdate::EraseProgress { current, total } => {
+                            self.operation_progress = Some((current, total));
+                            self.operation_status = format!("Erasing page {}/{}", current, total);
                         }
-                    }
+                        ProgressUpdate::FlashProgress { current, total } => {
+                            self.operation_progress = Some((current, total));
+                            self.operation_status = format!("Flashing page {}/{}", current, total);
+                        }
+                        ProgressUpdate::Message(msg) => {
+                            self.operation_status = msg;
+                        }
+                    },
                     OperationMessage::DeviceInfo(info) => {
                         self.result_message.push(format!("Device: {}", info));
                     }
                     OperationMessage::Complete => {
-                        self.result_message.push("Operation completed successfully".to_string());
+                        self.result_message
+                            .push("Operation completed successfully".to_string());
                         operation_complete = true;
                     }
                     OperationMessage::Error(err) => {
@@ -540,7 +611,11 @@ impl App {
         if self.file_browser_current_dir.parent().is_some() {
             self.file_browser_entries.push(FileEntry {
                 name: "..".to_string(),
-                path: self.file_browser_current_dir.parent().unwrap().to_path_buf(),
+                path: self
+                    .file_browser_current_dir
+                    .parent()
+                    .unwrap()
+                    .to_path_buf(),
                 is_dir: true,
             });
         }
@@ -598,7 +673,8 @@ impl App {
 
     fn enter_file_browser(&mut self) {
         // Start from current working directory
-        self.file_browser_current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        self.file_browser_current_dir =
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         self.populate_file_browser();
     }
 
@@ -652,7 +728,11 @@ impl App {
             match I::create() {
                 Ok(mut interface) => {
                     if let Err(e) = interface.open(&conn_params) {
-                        tx.send(SearchMessage::Error(format!("Failed to open interface: {:?}", e))).ok();
+                        tx.send(SearchMessage::Error(format!(
+                            "Failed to open interface: {:?}",
+                            e
+                        )))
+                        .ok();
                         return;
                     }
                     match interface.scan_network() {
@@ -664,26 +744,39 @@ impl App {
                                             node_id: Some(node),
                                             display_name,
                                             device_info,
-                                        })).ok();
+                                        }))
+                                        .ok();
                                     }
                                     Err(e) => {
                                         tx.send(SearchMessage::DeviceFound(DiscoveredDevice {
                                             node_id: Some(node),
-                                            display_name: format!("Node {:3} - Error: {:?}", node, e),
+                                            display_name: format!(
+                                                "Node {:3} - Error: {:?}",
+                                                node, e
+                                            ),
                                             device_info: String::new(),
-                                        })).ok();
+                                        }))
+                                        .ok();
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            tx.send(SearchMessage::Error(format!("Network scan failed: {:?}", e))).ok();
+                            tx.send(SearchMessage::Error(format!(
+                                "Network scan failed: {:?}",
+                                e
+                            )))
+                            .ok();
                             return;
                         }
                     }
                 }
                 Err(e) => {
-                    tx.send(SearchMessage::Error(format!("Failed to create interface: {:?}", e))).ok();
+                    tx.send(SearchMessage::Error(format!(
+                        "Failed to create interface: {:?}",
+                        e
+                    )))
+                    .ok();
                     return;
                 }
             }
@@ -695,10 +788,12 @@ impl App {
                         node_id: None,
                         display_name,
                         device_info,
-                    })).ok();
+                    }))
+                    .ok();
                 }
                 Err(e) => {
-                    tx.send(SearchMessage::Error(format!("Failed to connect: {:?}", e))).ok();
+                    tx.send(SearchMessage::Error(format!("Failed to connect: {:?}", e)))
+                        .ok();
                     return;
                 }
             }
@@ -786,7 +881,6 @@ impl App {
             }
         }
     }
-
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -834,7 +928,9 @@ fn run_app<B: ratatui::backend::Backend>(
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     match app.current_screen {
-                        Screen::InterfaceTypeSelection => handle_interface_type_selection(app, key.code),
+                        Screen::InterfaceTypeSelection => {
+                            handle_interface_type_selection(app, key.code)
+                        }
                         Screen::InterfaceSelection => handle_interface_selection(app, key.code),
                         Screen::Searching => {} // No input during search
                         Screen::DeviceList => handle_device_list(app, key.code),
@@ -861,14 +957,26 @@ fn handle_interface_type_selection(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Down => {
             let i = match app.interface_type_state.selected() {
-                Some(i) => if i >= 2 { 0 } else { i + 1 },
+                Some(i) => {
+                    if i >= 2 {
+                        0
+                    } else {
+                        i + 1
+                    }
+                }
                 None => 0,
             };
             app.interface_type_state.select(Some(i));
         }
         KeyCode::Up => {
             let i = match app.interface_type_state.selected() {
-                Some(i) => if i == 0 { 2 } else { i - 1 },
+                Some(i) => {
+                    if i == 0 {
+                        2
+                    } else {
+                        i - 1
+                    }
+                }
                 None => 0,
             };
             app.interface_type_state.select(Some(i));
@@ -895,7 +1003,13 @@ fn handle_interface_selection(app: &mut App, key: KeyCode) {
         KeyCode::Down => {
             let max_idx = app.available_interfaces.len().saturating_sub(1);
             let i = match app.interface_list_state.selected() {
-                Some(i) => if i >= max_idx { 0 } else { i + 1 },
+                Some(i) => {
+                    if i >= max_idx {
+                        0
+                    } else {
+                        i + 1
+                    }
+                }
                 None => 0,
             };
             app.interface_list_state.select(Some(i));
@@ -903,7 +1017,13 @@ fn handle_interface_selection(app: &mut App, key: KeyCode) {
         KeyCode::Up => {
             let max_idx = app.available_interfaces.len().saturating_sub(1);
             let i = match app.interface_list_state.selected() {
-                Some(i) => if i == 0 { max_idx } else { i - 1 },
+                Some(i) => {
+                    if i == 0 {
+                        max_idx
+                    } else {
+                        i - 1
+                    }
+                }
                 None => 0,
             };
             app.interface_list_state.select(Some(i));
@@ -929,7 +1049,13 @@ fn handle_device_list(app: &mut App, key: KeyCode) {
         KeyCode::Down => {
             let max_idx = app.discovered_devices.len().saturating_sub(1);
             let i = match app.device_list_state.selected() {
-                Some(i) => if i >= max_idx { 0 } else { i + 1 },
+                Some(i) => {
+                    if i >= max_idx {
+                        0
+                    } else {
+                        i + 1
+                    }
+                }
                 None => 0,
             };
             app.device_list_state.select(Some(i));
@@ -939,7 +1065,13 @@ fn handle_device_list(app: &mut App, key: KeyCode) {
         KeyCode::Up => {
             let max_idx = app.discovered_devices.len().saturating_sub(1);
             let i = match app.device_list_state.selected() {
-                Some(i) => if i == 0 { max_idx } else { i - 1 },
+                Some(i) => {
+                    if i == 0 {
+                        max_idx
+                    } else {
+                        i - 1
+                    }
+                }
                 None => 0,
             };
             app.device_list_state.select(Some(i));
@@ -968,14 +1100,26 @@ fn handle_command_menu(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Down => {
             let i = match app.command_menu_state.selected() {
-                Some(i) => if i >= 2 { 0 } else { i + 1 },
+                Some(i) => {
+                    if i >= 2 {
+                        0
+                    } else {
+                        i + 1
+                    }
+                }
                 None => 0,
             };
             app.command_menu_state.select(Some(i));
         }
         KeyCode::Up => {
             let i = match app.command_menu_state.selected() {
-                Some(i) => if i == 0 { 2 } else { i - 1 },
+                Some(i) => {
+                    if i == 0 {
+                        2
+                    } else {
+                        i - 1
+                    }
+                }
                 None => 0,
             };
             app.command_menu_state.select(Some(i));
@@ -1084,7 +1228,13 @@ fn handle_file_browser(app: &mut App, key: KeyCode) {
         KeyCode::Down => {
             let max_idx = app.file_browser_entries.len().saturating_sub(1);
             let i = match app.file_browser_list_state.selected() {
-                Some(i) => if i >= max_idx { 0 } else { i + 1 },
+                Some(i) => {
+                    if i >= max_idx {
+                        0
+                    } else {
+                        i + 1
+                    }
+                }
                 None => 0,
             };
             app.file_browser_list_state.select(Some(i));
@@ -1092,7 +1242,13 @@ fn handle_file_browser(app: &mut App, key: KeyCode) {
         KeyCode::Up => {
             let max_idx = app.file_browser_entries.len().saturating_sub(1);
             let i = match app.file_browser_list_state.selected() {
-                Some(i) => if i == 0 { max_idx } else { i - 1 },
+                Some(i) => {
+                    if i == 0 {
+                        max_idx
+                    } else {
+                        i - 1
+                    }
+                }
                 None => 0,
             };
             app.file_browser_list_state.select(Some(i));
@@ -1181,23 +1337,37 @@ fn draw_search_overlay(f: &mut Frame, app: &App) {
     // Clear the background
     f.render_widget(Clear, area);
 
-    let interface_name = app.selected_interface.as_ref().map(|s| s.as_str()).unwrap_or("Unknown");
-    let interface_type = app.selected_interface_type.as_ref().map(|it| it.as_str()).unwrap_or("Unknown");
+    let interface_name = app
+        .selected_interface
+        .as_ref()
+        .map(|s| s.as_str())
+        .unwrap_or("Unknown");
+    let interface_type = app
+        .selected_interface_type
+        .as_ref()
+        .map(|it| it.as_str())
+        .unwrap_or("Unknown");
 
     let text = vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled("⏳ Searching for devices...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "⏳ Searching for devices...",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Interface: ", Style::default().fg(Color::Cyan)),
             Span::raw(format!("{} ({})", interface_name, interface_type)),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Please wait, do not interact with the TUI", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Please wait, do not interact with the TUI",
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::ITALIC),
+        )]),
         Line::from(""),
     ];
 
@@ -1227,7 +1397,11 @@ fn draw_interface_type_selection(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let title = Paragraph::new("Frankly Firmware Update - Terminal UI")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
@@ -1239,7 +1413,11 @@ fn draw_interface_type_selection(f: &mut Frame, app: &App, area: Rect) {
     ];
 
     let list = List::new(items)
-        .block(Block::default().title("Select Interface Type").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title("Select Interface Type")
+                .borders(Borders::ALL),
+        )
         .highlight_style(
             Style::default()
                 .bg(Color::Blue)
@@ -1268,20 +1446,33 @@ fn draw_interface_selection(f: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    let interface_type = app.selected_interface_type.as_ref().map(|it| it.as_str()).unwrap_or("Unknown");
+    let interface_type = app
+        .selected_interface_type
+        .as_ref()
+        .map(|it| it.as_str())
+        .unwrap_or("Unknown");
     let title = Paragraph::new(format!("Select {} Interface", interface_type))
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
 
-    let items: Vec<ListItem> = app.available_interfaces
+    let items: Vec<ListItem> = app
+        .available_interfaces
         .iter()
         .map(|interface| ListItem::new(interface.as_str()))
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().title("Available Interfaces").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title("Available Interfaces")
+                .borders(Borders::ALL),
+        )
         .highlight_style(
             Style::default()
                 .bg(Color::Blue)
@@ -1292,10 +1483,12 @@ fn draw_interface_selection(f: &mut Frame, app: &App, area: Rect) {
     let mut state = app.interface_list_state.clone();
     f.render_stateful_widget(list, chunks[1], &mut state);
 
-    let help = Paragraph::new("Use ↑↓ to navigate, Enter to select and search, Esc to go back, 'q' to quit")
-        .style(Style::default().fg(Color::Gray))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+    let help = Paragraph::new(
+        "Use ↑↓ to navigate, Enter to select and search, Esc to go back, 'q' to quit",
+    )
+    .style(Style::default().fg(Color::Gray))
+    .alignment(Alignment::Center)
+    .block(Block::default().borders(Borders::ALL));
     f.render_widget(help, chunks[2]);
 }
 
@@ -1304,7 +1497,7 @@ fn draw_device_list(f: &mut Frame, app: &App, area: Rect) {
     let constraints = if app.device_list_refresh_message.is_some() {
         vec![
             Constraint::Length(3),
-            Constraint::Length(3),  // Refresh message
+            Constraint::Length(3), // Refresh message
             Constraint::Min(10),
             Constraint::Length(3),
         ]
@@ -1323,7 +1516,11 @@ fn draw_device_list(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let title = Paragraph::new("Select Device")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
@@ -1331,7 +1528,11 @@ fn draw_device_list(f: &mut Frame, app: &App, area: Rect) {
     let (list_chunk, help_chunk) = if let Some(ref refresh_msg) = app.device_list_refresh_message {
         // Show refresh message
         let refresh_info = Paragraph::new(refresh_msg.as_str())
-            .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(refresh_info, chunks[1]);
@@ -1340,13 +1541,18 @@ fn draw_device_list(f: &mut Frame, app: &App, area: Rect) {
         (1, 2)
     };
 
-    let items: Vec<ListItem> = app.discovered_devices
+    let items: Vec<ListItem> = app
+        .discovered_devices
         .iter()
         .map(|device| ListItem::new(device.display_name.as_str()))
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().title(format!("Found {} Device(s)", app.discovered_devices.len())).borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(format!("Found {} Device(s)", app.discovered_devices.len()))
+                .borders(Borders::ALL),
+        )
         .highlight_style(
             Style::default()
                 .bg(Color::Blue)
@@ -1357,10 +1563,12 @@ fn draw_device_list(f: &mut Frame, app: &App, area: Rect) {
     let mut state = app.device_list_state.clone();
     f.render_stateful_widget(list, chunks[list_chunk], &mut state);
 
-    let help = Paragraph::new("↑↓ to navigate | Enter to select | F5 to refresh | Esc to go back | 'q' to quit")
-        .style(Style::default().fg(Color::Gray))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+    let help = Paragraph::new(
+        "↑↓ to navigate | Enter to select | F5 to refresh | Esc to go back | 'q' to quit",
+    )
+    .style(Style::default().fg(Color::Gray))
+    .alignment(Alignment::Center)
+    .block(Block::default().borders(Borders::ALL));
     f.render_widget(help, chunks[help_chunk]);
 }
 
@@ -1379,7 +1587,12 @@ fn draw_command_menu(f: &mut Frame, app: &App, area: Rect) {
     let device_name = device.map(|d| d.display_name.as_str()).unwrap_or("Unknown");
 
     let title_info = Paragraph::new(vec![
-        Line::from(Span::styled("Select Command", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "Select Command",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from(vec![
             Span::styled("Device: ", Style::default().fg(Color::Green)),
@@ -1428,7 +1641,11 @@ fn draw_hex_file_input(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let title = Paragraph::new("Enter Hex File Path")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
@@ -1436,8 +1653,15 @@ fn draw_hex_file_input(f: &mut Frame, app: &App, area: Rect) {
     // Show input with history indicator
     let input_title = if !app.hex_file_history.is_empty() {
         let history_info = match app.hex_file_history_index {
-            Some(idx) => format!("Firmware Hex File Path [History {}/{}]", idx + 1, app.hex_file_history.len()),
-            None => format!("Firmware Hex File Path [History: {} entries]", app.hex_file_history.len()),
+            Some(idx) => format!(
+                "Firmware Hex File Path [History {}/{}]",
+                idx + 1,
+                app.hex_file_history.len()
+            ),
+            None => format!(
+                "Firmware Hex File Path [History: {} entries]",
+                app.hex_file_history.len()
+            ),
         };
         history_info
     } else {
@@ -1463,7 +1687,9 @@ fn draw_hex_file_input(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(help_text, chunks[2]);
 
     let help = if !app.hex_file_history.is_empty() {
-        Paragraph::new("Type path | ↑↓ for history | Tab for browser | Enter to flash | Esc to cancel")
+        Paragraph::new(
+            "Type path | ↑↓ for history | Tab for browser | Enter to flash | Esc to cancel",
+        )
     } else {
         Paragraph::new("Type path | Tab for browser | Enter to flash | Esc to cancel")
     };
@@ -1488,7 +1714,11 @@ fn draw_file_browser(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let title = Paragraph::new("Browse for Hex File")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
@@ -1496,10 +1726,15 @@ fn draw_file_browser(f: &mut Frame, app: &App, area: Rect) {
     let current_path = app.file_browser_current_dir.to_string_lossy().to_string();
     let path_display = Paragraph::new(current_path)
         .style(Style::default().fg(Color::Green))
-        .block(Block::default().title("Current Directory").borders(Borders::ALL));
+        .block(
+            Block::default()
+                .title("Current Directory")
+                .borders(Borders::ALL),
+        );
     f.render_widget(path_display, chunks[1]);
 
-    let items: Vec<ListItem> = app.file_browser_entries
+    let items: Vec<ListItem> = app
+        .file_browser_entries
         .iter()
         .map(|entry| {
             let display = if entry.is_dir {
@@ -1534,10 +1769,11 @@ fn draw_file_browser(f: &mut Frame, app: &App, area: Rect) {
     let mut state = app.file_browser_list_state.clone();
     f.render_stateful_widget(list, chunks[2], &mut state);
 
-    let help = Paragraph::new("↑↓ to navigate | Enter to select/open | Esc to go back to manual entry")
-        .style(Style::default().fg(Color::Gray))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+    let help =
+        Paragraph::new("↑↓ to navigate | Enter to select/open | Esc to go back to manual entry")
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL));
     f.render_widget(help, chunks[3]);
 }
 
@@ -1545,15 +1781,20 @@ fn draw_executing(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(10),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(10)])
         .split(area);
 
-    let command_name = app.selected_command.as_ref().map(|c| c.as_str()).unwrap_or("Unknown");
+    let command_name = app
+        .selected_command
+        .as_ref()
+        .map(|c| c.as_str())
+        .unwrap_or("Unknown");
     let title = Paragraph::new(format!("Executing: {}", command_name))
-        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
@@ -1587,9 +1828,10 @@ fn draw_executing(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("Progress: ", Style::default().fg(Color::Cyan)),
             Span::styled(bar, Style::default().fg(Color::Green)),
         ]));
-        info_lines.push(Line::from(vec![
-            Span::raw(format!("          {}/{} pages ({}%)", current, total, percentage)),
-        ]));
+        info_lines.push(Line::from(vec![Span::raw(format!(
+            "          {}/{} pages ({}%)",
+            current, total, percentage
+        ))]));
     }
 
     if !app.operation_status.is_empty() {
@@ -1600,7 +1842,10 @@ fn draw_executing(f: &mut Frame, app: &App, area: Rect) {
         )));
     } else {
         info_lines.push(Line::from(""));
-        info_lines.push(Line::from(Span::styled("Please wait...", Style::default().fg(Color::Yellow))));
+        info_lines.push(Line::from(Span::styled(
+            "Please wait...",
+            Style::default().fg(Color::Yellow),
+        )));
     }
 
     let info = Paragraph::new(info_lines)
@@ -1621,7 +1866,11 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let title = Paragraph::new("Operation Results")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
@@ -1641,10 +1890,7 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
     } else if !app.result_message.is_empty() {
         for msg in &app.result_message {
             // Replace special characters that might cause display issues
-            let msg_clean = msg
-                .replace('\t', " ")
-                .replace('\r', "")
-                .replace('\n', " ");
+            let msg_clean = msg.replace('\t', " ").replace('\r', "").replace('\n', " ");
             result_lines.push(Line::from(Span::styled(
                 msg_clean,
                 Style::default().fg(Color::Green),

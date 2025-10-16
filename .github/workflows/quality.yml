@@ -1,0 +1,57 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ master, devel ]
+  pull_request:
+    branches: [ master, devel ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  formatting:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        components: rustfmt
+
+    - name: Check code formatting
+      run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+    - name: Checkout frankly-bootloader dependency
+      uses: actions/checkout@v4
+      with:
+        repository: franc0r/frankly-bootloader
+        ref: devel
+        path: frankly-bootloader
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        path: frankly-fw-update-cli
+
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        components: clippy
+        cache: true
+
+    - name: Run Clippy
+      working-directory: ./frankly-fw-update-cli
+      run: cargo clippy --workspace --all-targets -- -D warnings

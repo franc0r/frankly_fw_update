@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: frankly-fw-update
+Upstream-Contact: FRANCOR e.V. <info@francor.de>
+Source: https://github.com/franc0r/frankly-fw-update-cli
+
+Files: *
+Copyright: 2025 FRANCOR e.V.
+License: UNKNOWN
+ This package does not currently have a specified license.
+ Please contact the maintainer for licensing information.

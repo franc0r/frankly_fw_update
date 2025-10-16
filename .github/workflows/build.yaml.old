@@ -1,0 +1,26 @@
+name: Build & Test App
+on:
+  push:
+    branches: [ master, devel ]
+
+jobs:
+  ci-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get install -y libudev-dev
+      - name: Install RUST
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      - name: Checkout Frankly Bootloader Library
+        run: |
+          mkdir -p ../frankly-bootloader
+          git clone https://github.com/franc0r/frankly-bootloader.git ../frankly-bootloader
+          (cd ../frankly-bootloader && git checkout devel)
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+      - name: Build App
+        run: cargo build
+      - name: Run Tests for App
+        run: cargo test
+      - name: Run Tests for Library
+        run: cargo test --lib

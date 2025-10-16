@@ -1,0 +1,13 @@
+[package]
+name = "frankly-fw-update-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "frankly-fw-update-cli"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+indicatif = { workspace = true }
+frankly-fw-update-common = { path = "../common" }

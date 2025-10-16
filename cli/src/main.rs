@@ -187,7 +187,7 @@ fn main() {
         .num_args(1);
 
     let matches = Command::new("frankly-fw-update")
-        .version("0.1.0")
+        .version("0.2.0")
         .author("Martin Bauernschmitt - FRANCOR e.V.")
         .arg_required_else_help(true)
         .subcommand_required(true)

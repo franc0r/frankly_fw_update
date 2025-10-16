@@ -11,6 +11,23 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 # Use all available CPU cores for building
 export CARGO_BUILD_JOBS = $(shell nproc)
 
+# Detect target architecture for cross-compilation
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+DEB_HOST_GNU_TYPE ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
+
+ifeq ($(DEB_HOST_ARCH),arm64)
+	RUST_TARGET = aarch64-unknown-linux-gnu
+	export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = aarch64-linux-gnu-gcc
+	export CC_aarch64_unknown_linux_gnu = aarch64-linux-gnu-gcc
+	export CXX_aarch64_unknown_linux_gnu = aarch64-linux-gnu-g++
+	export PKG_CONFIG_PATH = /usr/lib/aarch64-linux-gnu/pkgconfig
+	export PKG_CONFIG_ALLOW_CROSS = 1
+	CARGO_BUILD_TARGET_DIR = target/aarch64-unknown-linux-gnu
+else
+	RUST_TARGET = x86_64-unknown-linux-gnu
+	CARGO_BUILD_TARGET_DIR = target/x86_64-unknown-linux-gnu
+endif
+
 %:
 	dh $@
 
@@ -25,20 +42,24 @@ override_dh_auto_configure:
 	fi
 
 override_dh_auto_build:
-	# Build the entire workspace in release mode
-	cargo build --release --workspace
+	# Build the entire workspace in release mode for the target architecture
+	cargo build --release --workspace --target $(RUST_TARGET)
 
 override_dh_auto_test:
-	# Run tests
-	cargo test --workspace || true
+	# Skip tests when cross-compiling
+ifeq ($(DEB_HOST_ARCH),$(shell dpkg-architecture -qDEB_BUILD_ARCH))
+	cargo test --workspace --target $(RUST_TARGET) || true
+else
+	@echo "Skipping tests for cross-compilation"
+endif
 
 override_dh_auto_install:
 	# Install CLI binary
-	install -D -m 755 target/release/frankly-fw-update-cli \
+	install -D -m 755 $(CARGO_BUILD_TARGET_DIR)/release/frankly-fw-update-cli \
 		debian/frankly-fw-update-cli/usr/bin/frankly-fw-update-cli
 
 	# Install TUI binary
-	install -D -m 755 target/release/frankly-fw-update-tui \
+	install -D -m 755 $(CARGO_BUILD_TARGET_DIR)/release/frankly-fw-update-tui \
 		debian/frankly-fw-update-tui/usr/bin/frankly-fw-update-tui
 
 override_dh_dwz:

@@ -1,3 +1,67 @@
+//! # Frankly Firmware Update - Terminal User Interface (TUI)
+//!
+//! Interactive terminal-based user interface for updating firmware on embedded devices
+//! using the Frankly Bootloader protocol.
+//!
+//! ## Architecture Overview
+//!
+//! The TUI follows a **screen-based state machine** architecture with background task execution:
+//!
+//! ```text
+//! InterfaceTypeSelection → InterfaceSelection → Searching → DeviceList
+//!                                                              ↓
+//!                                                         CommandMenu
+//!                                                              ↓
+//!                                                       HexFileInput ←→ FileBrowser
+//!                                                              ↓
+//!                                                          Executing
+//!                                                              ↓
+//!                                                           Results
+//! ```
+//!
+//! ## Key Features
+//!
+//! - **Non-blocking Operations**: Long-running operations (search, erase, flash) execute in
+//!   background threads, keeping the UI responsive
+//! - **Live Progress Updates**: Real-time progress bars for erase/flash operations via
+//!   message-passing channels
+//! - **Device Discovery**: Automatic scanning for devices on selected interface, with F5 refresh
+//! - **File Browser**: Interactive filesystem navigation for selecting hex files
+//! - **History Management**: Remembers last 10 firmware file paths for quick reuse
+//! - **Multi-Interface Support**: Works with Serial, CAN, and SIM (simulated) interfaces
+//!
+//! ## Message Passing Architecture
+//!
+//! Background operations communicate with the UI thread via `mpsc::channel`:
+//!
+//! ```text
+//! Background Thread           Channel              UI Thread
+//! ─────────────────          ─────────            ─────────
+//! device.erase()      ──>  EraseProgress(2/10) ──> Update progress bar
+//! device.flash()      ──>  FlashProgress(5/60) ──> Update status message
+//! operation complete  ──>  Complete            ──> Transition to Results screen
+//! ```
+//!
+//! The UI thread polls channels every 100ms using `try_recv()` to maintain responsiveness.
+//!
+//! ## Screen Flow Details
+//!
+//! 1. **InterfaceTypeSelection**: Choose between SIM, Serial, or CAN
+//! 2. **InterfaceSelection**: Select specific interface (e.g., /dev/ttyACM0, can0)
+//! 3. **Searching**: Background device discovery with progress overlay
+//! 4. **DeviceList**: Display found devices, select target device
+//! 5. **CommandMenu**: Choose operation (Reset, Erase, Flash)
+//! 6. **HexFileInput**: Enter firmware path (with history) or press Tab for browser
+//! 7. **FileBrowser**: Navigate filesystem to select .hex file
+//! 8. **Executing**: Live progress display during operation execution
+//! 9. **Results**: Show operation outcome (success/error)
+//!
+//! ## Threading Model
+//!
+//! - **Main Thread**: UI rendering and event handling (60 FPS with 100ms poll)
+//! - **Background Threads**: Device operations (spawned via `thread::spawn`)
+//! - **Communication**: Unidirectional via `mpsc::channel` (background → main)
+
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -25,18 +89,36 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use std::time::Duration;
 
+/// Default list of simulated device node IDs for testing
 const SIM_NODE_LST: [u8; 4] = [1, 3, 31, 8];
 
+// ================================================================================================
+// Type Definitions
+// ================================================================================================
+
+/// Communication interface type selection.
+///
+/// Represents the available communication protocols for connecting to embedded devices.
+/// Each type has different characteristics:
+///
+/// - **Sim**: Simulated devices for testing without hardware
+/// - **Serial**: UART/USB serial connections (single device per port)
+/// - **CAN**: CAN bus networks (supports multiple devices on single bus)
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::upper_case_acronyms)]
 enum InterfaceType {
+    /// Simulated device interface for testing
     Sim,
+    /// Serial (UART/USB) interface
     Serial,
+    /// CAN bus interface
     CAN,
 }
 
 impl InterfaceType {
+    /// Returns the human-readable display name for this interface type
     fn as_str(&self) -> &str {
         match self {
             InterfaceType::Sim => "SIM",
@@ -46,35 +128,61 @@ impl InterfaceType {
     }
 }
 
+/// Represents a discovered device on the network or interface.
+///
+/// Contains identification information retrieved during the device search phase.
+/// For network interfaces (CAN), includes the node ID. For point-to-point interfaces
+/// (Serial), node_id is None.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct DiscoveredDevice {
+    /// Node ID for network interfaces (CAN), None for point-to-point (Serial)
     node_id: Option<u8>,
+    /// Human-readable display name shown in device list
     display_name: String,
+    /// Full device information string (VID, PID, PRD, UID)
     device_info: String,
 }
 
+/// Application screen states representing the UI state machine.
+///
+/// Each variant corresponds to a distinct screen in the TUI. Navigation between
+/// screens follows the flow defined in the module-level documentation.
 #[derive(Debug, Clone, PartialEq)]
 enum Screen {
+    /// Initial screen: Select interface type (SIM/Serial/CAN)
     InterfaceTypeSelection,
+    /// Select specific interface instance (e.g., ttyACM0, can0)
     InterfaceSelection,
+    /// Searching for devices (shows progress overlay)
     Searching,
+    /// Display list of discovered devices
     DeviceList,
+    /// Select command to execute (Reset/Erase/Flash)
     CommandMenu,
+    /// Input hex file path with history support
     HexFileInput,
+    /// Interactive file browser for selecting hex files
     FileBrowser,
+    /// Executing operation with live progress display
     Executing,
+    /// Show operation results (success/error)
     Results,
 }
 
+/// Bootloader commands that can be executed on a device.
 #[derive(Debug, Clone, PartialEq)]
 enum Command {
+    /// Reset the device (restart application or stay in bootloader)
     Reset,
+    /// Erase the application flash memory
     Erase,
+    /// Flash new firmware from hex file
     Flash,
 }
 
 impl Command {
+    /// Returns the human-readable display name for this command
     fn as_str(&self) -> &str {
         match self {
             Command::Reset => "Reset Device",
@@ -84,61 +192,148 @@ impl Command {
     }
 }
 
+/// Messages sent from background operation threads to the UI thread.
+///
+/// These messages flow through an `mpsc::channel` to provide progress updates
+/// and completion status for long-running operations (reset, erase, flash).
 #[derive(Debug)]
 enum OperationMessage {
+    /// Progress update from device operation (erase/flash progress, status messages)
     Progress(ProgressUpdate),
+    /// Device identification information retrieved after connection
     DeviceInfo(String),
+    /// Operation completed successfully
     Complete,
+    /// Operation failed with error message
     Error(String),
 }
 
+/// Messages sent from background search threads to the UI thread.
+///
+/// Device discovery runs in a background thread to avoid blocking the UI.
+/// Results are streamed back via these messages.
 #[derive(Debug)]
 enum SearchMessage {
+    /// A device was discovered on the interface
     DeviceFound(DiscoveredDevice),
+    /// Search completed (all devices found)
     Complete,
+    /// Search failed with error message
     Error(String),
 }
 
+/// Represents a file or directory entry in the file browser.
+///
+/// Used for interactive filesystem navigation when selecting hex files.
 #[derive(Debug, Clone)]
 struct FileEntry {
+    /// File or directory name (not full path)
     name: String,
+    /// Full absolute path to the entry
     path: PathBuf,
+    /// True if this is a directory, false if it's a file
     is_dir: bool,
 }
 
+// ================================================================================================
+// Application State
+// ================================================================================================
+
+/// Main application state container.
+///
+/// Holds all UI state, user selections, discovered devices, and communication channels
+/// for background operations. This is the central data structure that drives the entire TUI.
+///
+/// ## State Management
+///
+/// - **Screen Navigation**: `current_screen` tracks which UI screen is displayed
+/// - **User Selections**: Interface type, specific interface, device, command, hex file
+/// - **Discovery State**: List of discovered devices and available interfaces
+/// - **Background Tasks**: Receivers for operation and search messages
+/// - **UI State**: List selections, input modes, history, error/result messages
 struct App {
+    // === Screen and Navigation ===
+    /// Current active screen in the state machine
     current_screen: Screen,
+
+    // === Interface Type Selection ===
+    /// List widget state for interface type selection
     interface_type_state: ListState,
+    /// Currently selected interface type (SIM/Serial/CAN)
     selected_interface_type: Option<InterfaceType>,
+
+    // === Interface Selection ===
+    /// Available interface instances (e.g., ["/dev/ttyACM0", "/dev/ttyUSB0"])
     available_interfaces: Vec<String>,
+    /// List widget state for interface selection
     interface_list_state: ListState,
+    /// Currently selected interface instance
     selected_interface: Option<String>,
+
+    // === Device Discovery ===
+    /// List of devices found during search operation
     discovered_devices: Vec<DiscoveredDevice>,
+    /// List widget state for device list
     device_list_state: ListState,
+    /// Index of selected device in discovered_devices
     selected_device_index: Option<usize>,
+
+    // === Command Selection ===
+    /// List widget state for command menu
     command_menu_state: ListState,
+    /// Currently selected command (Reset/Erase/Flash)
     selected_command: Option<Command>,
+
+    // === Hex File Input ===
+    /// Current hex file path being entered or selected
     hex_file_path: String,
+    /// Whether hex file input is in text entry mode (vs browsing)
     hex_file_input_mode: bool,
+    /// History of previously used firmware file paths (max 10)
     hex_file_history: Vec<String>,
+    /// Current position in history when browsing with arrow keys
     hex_file_history_index: Option<usize>,
+
+    // === Results and Messages ===
+    /// Success messages to display on Results screen
     result_message: Vec<String>,
+    /// Error message to display (if any)
     error_message: Option<String>,
+    /// Temporary message shown after refreshing device list
     device_list_refresh_message: Option<String>,
-    // Progress tracking
-    operation_progress: Option<(u32, u32)>, // (current, total)
+
+    // === Progress Tracking ===
+    /// Current operation progress: (current_page, total_pages)
+    operation_progress: Option<(u32, u32)>,
+    /// Status message for current operation (e.g., "Erasing page 5/10")
     operation_status: String,
+    /// Channel receiver for operation progress updates from background thread
     operation_receiver: Option<Receiver<OperationMessage>>,
-    // Search tracking
+
+    // === Search Tracking ===
+    /// Channel receiver for device search results from background thread
     search_receiver: Option<Receiver<SearchMessage>>,
+    /// Flag indicating whether current search is a refresh operation
     is_refresh_search: bool,
-    // File browser
+
+    // === File Browser ===
+    /// Current directory being browsed in file browser
     file_browser_current_dir: PathBuf,
+    /// List of files and directories in current directory
     file_browser_entries: Vec<FileEntry>,
+    /// List widget state for file browser
     file_browser_list_state: ListState,
 }
 
+// ================================================================================================
+// Application Implementation
+// ================================================================================================
+
 impl App {
+    /// Creates a new App instance with default state.
+    ///
+    /// Initializes all UI state, sets the starting screen to InterfaceTypeSelection,
+    /// and prepares list selections with appropriate defaults.
     fn new() -> App {
         let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut app = App {
@@ -169,11 +364,33 @@ impl App {
             file_browser_entries: Vec::new(),
             file_browser_list_state: ListState::default(),
         };
+        // Select first item in interface type list by default
         app.interface_type_state.select(Some(0));
+        // Select first item in command menu by default
         app.command_menu_state.select(Some(0));
         app
     }
 
+    /// Discovers and enumerates available interfaces for the selected interface type.
+    ///
+    /// This method populates `available_interfaces` with a list of interface instances
+    /// that can be used for communication. The behavior varies by interface type:
+    ///
+    /// - **SIM**: Always returns a single "sim" interface
+    /// - **Serial**: Scans for accessible serial ports, filtering out inactive/inaccessible ones
+    /// - **CAN**: Scans `/sys/class/net` for CAN interfaces (can*, vcan*)
+    ///
+    /// ## Serial Port Filtering
+    ///
+    /// For Serial interfaces, each port is tested by attempting to open it with a 100ms timeout.
+    /// Only ports that can be successfully opened are included in the list. This filters out:
+    /// - Ports that are already in use
+    /// - Ports without proper permissions
+    /// - Inactive/disconnected ports
+    ///
+    /// ## Error Handling
+    ///
+    /// Sets `error_message` if no interfaces are found or enumeration fails.
     fn discover_interfaces(&mut self) {
         self.available_interfaces.clear();
 
@@ -182,11 +399,24 @@ impl App {
                 self.available_interfaces.push("sim".to_string());
             }
             InterfaceType::Serial => {
-                // Enumerate serial ports
+                // Enumerate serial ports and filter to only accessible ones
                 match serialport::available_ports() {
                     Ok(ports) => {
                         for port in ports {
-                            self.available_interfaces.push(port.port_name);
+                            // Try to open the port to verify it's accessible and active
+                            // Use a very short timeout to avoid hanging
+                            match serialport::new(&port.port_name, 115200)
+                                .timeout(Duration::from_millis(100))
+                                .open()
+                            {
+                                Ok(_) => {
+                                    // Port is accessible and active, add it to the list
+                                    self.available_interfaces.push(port.port_name);
+                                }
+                                Err(_) => {
+                                    // Port is not accessible or inactive, skip it
+                                }
+                            }
                         }
                     }
                     Err(_) => {
@@ -195,7 +425,7 @@ impl App {
                 }
 
                 if self.available_interfaces.is_empty() {
-                    self.error_message = Some("No serial ports found".to_string());
+                    self.error_message = Some("No accessible serial ports found".to_string());
                 }
             }
             InterfaceType::CAN => {
@@ -216,11 +446,25 @@ impl App {
             }
         }
 
+        // Select first interface if any were found
         if !self.available_interfaces.is_empty() {
             self.interface_list_state.select(Some(0));
         }
     }
 
+    /// Adds a firmware file path to the history list.
+    ///
+    /// Maintains a history of the last 10 firmware file paths used for flashing.
+    /// The history is ordered with most recent first, and duplicates are removed.
+    ///
+    /// ## Behavior
+    ///
+    /// - Empty paths are ignored
+    /// - If path already exists in history, it's moved to the front
+    /// - History is limited to 10 entries (oldest are dropped)
+    /// - History index is reset after adding
+    ///
+    /// Users can navigate history with ↑↓ arrow keys in the HexFileInput screen.
     fn add_to_hex_file_history(&mut self, path: String) {
         // Don't add empty paths or duplicates at the front
         if path.is_empty() {
@@ -242,6 +486,25 @@ impl App {
         self.hex_file_history_index = None;
     }
 
+    /// Executes the currently selected command on the selected device.
+    ///
+    /// This method orchestrates command execution by:
+    /// 1. Preparing execution parameters (connection params, node ID, hex file)
+    /// 2. Creating a progress update channel
+    /// 3. Spawning a background thread for the operation
+    /// 4. Delegating to interface-specific spawn methods
+    ///
+    /// ## Background Execution
+    ///
+    /// Operations run in background threads via `spawn_operation`, `spawn_erase`, or
+    /// `spawn_flash` methods. Progress updates flow back to the UI thread through
+    /// `operation_receiver`.
+    ///
+    /// ## Command Types
+    ///
+    /// - **Reset**: Spawns via `spawn_operation`
+    /// - **Erase**: Spawns via `spawn_erase` with page-by-page progress
+    /// - **Flash**: Spawns via `spawn_flash`, includes hex file loading and verification
     fn execute_command(&mut self) {
         self.result_message.clear();
         self.error_message = None;
@@ -551,6 +814,12 @@ impl App {
             .and_then(|idx| self.discovered_devices.get(idx))
     }
 
+    /// Returns the connection parameters for the currently selected interface.
+    ///
+    /// Creates a `ComConnParams` struct appropriate for the selected interface type:
+    /// - **SIM**: Simulated device parameters
+    /// - **Serial**: Serial port name + 115200 baud rate
+    /// - **CAN**: CAN interface name
     fn get_conn_params(&self) -> ComConnParams {
         let interface_name = self.selected_interface.as_ref().unwrap();
         match self.selected_interface_type.as_ref().unwrap() {
@@ -560,6 +829,20 @@ impl App {
         }
     }
 
+    /// Processes progress messages from background operation threads.
+    ///
+    /// Called every 100ms from the main event loop to check for updates from
+    /// `operation_receiver`. Updates UI state based on received messages:
+    ///
+    /// - `Progress`: Updates progress bar and status message
+    /// - `DeviceInfo`: Adds device identification to results
+    /// - `Complete`: Marks operation successful and transitions to Results screen
+    /// - `Error`: Captures error message and transitions to Results screen
+    ///
+    /// ## Non-blocking Design
+    ///
+    /// Uses `try_recv()` to avoid blocking the UI thread. Processes all pending
+    /// messages in a tight loop before returning control to the event handler.
     fn process_operation_messages(&mut self) {
         let mut operation_complete = false;
         let mut operation_error = None;
@@ -606,6 +889,19 @@ impl App {
         }
     }
 
+    /// Populates the file browser with entries from the current directory.
+    ///
+    /// Scans `file_browser_current_dir` and builds a list of navigable entries:
+    /// - Adds parent directory (`..`) if not at filesystem root
+    /// - Includes all subdirectories (for navigation)
+    /// - Includes only `.hex` files (filters out other file types)
+    /// - Skips hidden files (starting with `.`)
+    /// - Sorts entries: directories first (alphabetically), then files (alphabetically)
+    ///
+    /// ## Display Format
+    ///
+    /// - Directories: `[DIR] dirname/` (colored blue)
+    /// - Hex files: `[FILE] filename.hex` (colored green)
     fn populate_file_browser(&mut self) {
         self.file_browser_entries.clear();
 
@@ -680,6 +976,27 @@ impl App {
         self.populate_file_browser();
     }
 
+    /// Initiates an asynchronous device search operation.
+    ///
+    /// Spawns a background thread that scans the selected interface for devices.
+    /// Results are streamed back via `search_receiver` and processed by
+    /// `process_search_messages()`.
+    ///
+    /// ## Search Behavior by Interface Type
+    ///
+    /// - **Network Interfaces (CAN, SIM)**: Calls `scan_network()` to get node list,
+    ///   then connects to each node individually to retrieve device info
+    /// - **Point-to-Point (Serial)**: Attempts single device connection on the port
+    ///
+    /// ## Message Flow
+    ///
+    /// ```text
+    /// Background Thread          Channel           UI Thread
+    /// ─────────────────         ────────          ─────────
+    /// scan_network()      ──>  DeviceFound(1)  ──> Add to list
+    /// connect_to_node(1)  ──>  DeviceFound(2)  ──> Add to list
+    /// ...                 ──>  Complete        ──> Show device list
+    /// ```
     fn spawn_search(&mut self) {
         self.discovered_devices.clear();
         self.error_message = None;
@@ -885,19 +1202,37 @@ impl App {
     }
 }
 
+// ================================================================================================
+// Main Entry Point
+// ================================================================================================
+
+/// Application entry point.
+///
+/// Sets up the terminal in raw mode with alternate screen, runs the TUI event loop,
+/// and restores terminal state on exit.
+///
+/// ## Terminal Setup
+///
+/// - Enables raw mode (disables line buffering, echo)
+/// - Switches to alternate screen (preserves main terminal content)
+/// - Enables mouse capture for potential future enhancements
+///
+/// ## Error Handling
+///
+/// Ensures terminal is properly restored even if the app panics or returns an error.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Setup terminal
+    // Setup terminal for TUI mode
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create app and run
+    // Create app state and run event loop
     let mut app = App::new();
     let res = run_app(&mut terminal, &mut app);
 
-    // Restore terminal
+    // Restore terminal to original state
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -906,6 +1241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     terminal.show_cursor()?;
 
+    // Print any errors that occurred during execution
     if let Err(err) = res {
         println!("Error: {:?}", err);
     }
@@ -913,37 +1249,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Main event loop for the TUI application.
+///
+/// Continuously:
+/// 1. Processes messages from background threads (operations and searches)
+/// 2. Redraws the UI based on current app state
+/// 3. Polls for keyboard input with 100ms timeout
+/// 4. Dispatches input to appropriate screen handler
+///
+/// ## Performance
+///
+/// - Polls at 100ms intervals (10 FPS) for responsive UI
+/// - Non-blocking message processing via `try_recv()`
+/// - Only redraws when state changes or input occurs
+///
+/// ## Input Handling
+///
+/// Each screen has its own keyboard handler function. The global 'q' key
+/// quits the application (except when in text input mode).
 fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> io::Result<()> {
     loop {
-        // Process background operation messages
+        // Poll background threads for progress updates
         app.process_operation_messages();
-        // Process background search messages
         app.process_search_messages();
 
+        // Render current screen
         terminal.draw(|f| ui(f, app))?;
 
-        // Use poll with timeout for responsive UI updates
+        // Poll for keyboard input with 100ms timeout (keeps UI responsive)
         if crossterm::event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    // Dispatch to screen-specific handler
                     match app.current_screen {
                         Screen::InterfaceTypeSelection => {
                             handle_interface_type_selection(app, key.code)
                         }
                         Screen::InterfaceSelection => handle_interface_selection(app, key.code),
-                        Screen::Searching => {} // No input during search
+                        Screen::Searching => {} // Blocked during search
                         Screen::DeviceList => handle_device_list(app, key.code),
                         Screen::CommandMenu => handle_command_menu(app, key.code),
                         Screen::HexFileInput => handle_hex_file_input(app, key.code),
                         Screen::FileBrowser => handle_file_browser(app, key.code),
-                        Screen::Executing => {} // No input during execution
+                        Screen::Executing => {} // Blocked during execution
                         Screen::Results => handle_results(app, key.code),
                     }
 
-                    // Global quit
+                    // Global quit shortcut (unless in text input mode)
                     if let KeyCode::Char('q') = key.code {
                         if !app.hex_file_input_mode {
                             return Ok(());
@@ -954,6 +1309,20 @@ fn run_app<B: ratatui::backend::Backend>(
         }
     }
 }
+
+// ================================================================================================
+// Keyboard Input Handlers
+// ================================================================================================
+//
+// Each screen has a dedicated handler function that processes KeyCode events.
+// Handlers update app state and trigger screen transitions as needed.
+//
+// Common patterns:
+// - Up/Down: Navigate lists
+// - Enter: Select/confirm
+// - Esc: Go back to previous screen
+// - F5: Refresh lists
+// ================================================================================================
 
 fn handle_interface_type_selection(app: &mut App, key: KeyCode) {
     match key {
@@ -1038,6 +1407,10 @@ fn handle_interface_selection(app: &mut App, key: KeyCode) {
                     app.spawn_search();
                 }
             }
+        }
+        KeyCode::F(5) => {
+            // Refresh interface list (rescan for new serial devices, etc.)
+            app.discover_interfaces();
         }
         KeyCode::Esc => {
             app.current_screen = Screen::InterfaceTypeSelection;
@@ -1291,6 +1664,23 @@ fn handle_results(app: &mut App, key: KeyCode) {
     }
 }
 
+// ================================================================================================
+// UI Rendering Functions
+// ================================================================================================
+//
+// These functions use ratatui widgets to draw the various screens.
+// Each screen is composed of layouts, lists, paragraphs, and styled text.
+//
+// Color scheme:
+// - Cyan: Titles and headers
+// - Blue: Selected/highlighted items
+// - Green: Success messages, active elements
+// - Yellow: Progress indicators, warnings
+// - Red: Error messages
+// - Gray: Help text
+// ================================================================================================
+
+/// Main UI dispatcher - renders the appropriate screen based on app state.
 fn ui(f: &mut Frame, app: &App) {
     let size = f.area();
 
@@ -1482,7 +1872,7 @@ fn draw_interface_selection(f: &mut Frame, app: &App, area: Rect) {
     f.render_stateful_widget(list, chunks[1], &mut state);
 
     let help = Paragraph::new(
-        "Use ↑↓ to navigate, Enter to select and search, Esc to go back, 'q' to quit",
+        "↑↓ to navigate | Enter to select | F5 to refresh | Esc to go back | 'q' to quit",
     )
     .style(Style::default().fg(Color::Gray))
     .alignment(Alignment::Center)

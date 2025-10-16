@@ -24,10 +24,51 @@ jobs:
         arch: ['amd64', 'arm64']
 
     steps:
-    - name: Setup dpkg for cross-compilation
+    - name: Setup cross-compilation for arm64
       if: matrix.arch == 'arm64'
       run: |
+        # Add arm64 architecture
         sudo dpkg --add-architecture arm64
+
+        # Configure apt sources for arm64 packages
+        # arm64 packages are served from ports.ubuntu.com, not security.ubuntu.com
+        CODENAME=$(lsb_release -sc)
+
+        # Ubuntu 24.04+ uses DEB822 format in /etc/apt/sources.list.d/ubuntu.sources
+        if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+          echo "Detected DEB822 format (Ubuntu 24.04+)"
+
+          # Add Architectures: amd64 to restrict existing sources
+          if ! grep -q "^Architectures:" /etc/apt/sources.list.d/ubuntu.sources; then
+            sudo sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+
+          # Create arm64 sources file
+          sudo tee /etc/apt/sources.list.d/ubuntu-ports.sources > /dev/null <<EOF
+        Types: deb
+        URIs: http://ports.ubuntu.com/ubuntu-ports/
+        Suites: $CODENAME $CODENAME-updates $CODENAME-backports $CODENAME-security
+        Components: main restricted universe multiverse
+        Architectures: arm64
+        Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+        EOF
+
+        else
+          echo "Detected old sources.list format (Ubuntu 22.04)"
+
+          # Match any Ubuntu mirror and add [arch=amd64]
+          sudo sed -i -E 's|^deb (http://[^/]*archive\.ubuntu\.com/ubuntu/)|deb [arch=amd64] \1|g' /etc/apt/sources.list
+          sudo sed -i -E 's|^deb (http://[^/]*ubuntu\.com/ubuntu/)|deb [arch=amd64] \1|g' /etc/apt/sources.list
+          sudo sed -i -E 's|^deb (https://[^/]*archive\.ubuntu\.com/ubuntu/)|deb [arch=amd64] \1|g' /etc/apt/sources.list
+          sudo sed -i -E 's|^deb (https://[^/]*ubuntu\.com/ubuntu/)|deb [arch=amd64] \1|g' /etc/apt/sources.list
+          sudo sed -i -E 's|\[arch=amd64\] \[arch=amd64\]|[arch=amd64]|g' /etc/apt/sources.list
+
+          # Add arm64 repositories from ports.ubuntu.com
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $CODENAME main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $CODENAME-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $CODENAME-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $CODENAME-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+        fi
 
     - name: Install system dependencies
       run: |

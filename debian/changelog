@@ -1,0 +1,10 @@
+frankly-fw-update (0.1.0-1) unstable; urgency=medium
+
+  * Initial release
+  * Command-line interface for firmware updates
+  * Terminal user interface with interactive menus
+  * Support for Serial, CAN, Ethernet, and SIM interfaces
+  * Device discovery and scanning
+  * Firmware flashing from Intel HEX files
+
+ -- FRANCOR e.V. <info@francor.de>  Thu, 16 Oct 2025 12:00:00 +0000

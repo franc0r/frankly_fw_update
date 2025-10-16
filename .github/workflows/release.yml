@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-deb-packages:
+    name: Build Debian Packages
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ubuntu_version: ['22.04', '24.04']
+
+    steps:
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          debhelper \
+          devscripts \
+          libudev-dev \
+          pkg-config
+
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        cache: true
+
+    - name: Checkout frankly-bootloader dependency
+      uses: actions/checkout@v4
+      with:
+        repository: franc0r/frankly-bootloader
+        ref: devel
+        path: frankly-bootloader
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        path: frankly-fw-update-cli
+
+    - name: Get version
+      id: get_version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Update changelog with version
+      working-directory: ./frankly-fw-update-cli
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        DATE=$(date -R)
+        cat > debian/changelog << EOF
+        frankly-fw-update (${VERSION}-1) unstable; urgency=medium
+
+          * Release version ${VERSION}
+
+         -- Francor <info@francor.de>  ${DATE}
+        EOF
+
+    - name: Build Debian packages
+      working-directory: ./frankly-fw-update-cli
+      run: |
+        dpkg-buildpackage -us -uc -b
+
+    - name: List generated packages
+      run: |
+        echo "Generated packages:"
+        ls -lh *.deb
+
+    - name: Upload CLI package
+      uses: actions/upload-artifact@v4
+      with:
+        name: frankly-fw-update-cli-ubuntu-${{ matrix.ubuntu_version }}
+        path: frankly-fw-update-cli_*.deb
+        if-no-files-found: error
+
+    - name: Upload TUI package
+      uses: actions/upload-artifact@v4
+      with:
+        name: frankly-fw-update-tui-ubuntu-${{ matrix.ubuntu_version }}
+        path: frankly-fw-update-tui_*.deb
+        if-no-files-found: error
+
+    - name: Upload all build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-ubuntu-${{ matrix.ubuntu_version }}
+        path: |
+          *.deb
+          *.buildinfo
+          *.changes
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-deb-packages
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Organize release files
+      run: |
+        mkdir -p release
+        find artifacts -name "*.deb" -exec cp {} release/ \;
+        ls -lh release/
+
+    - name: Get version
+      id: get_version
+      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Release v${{ steps.get_version.outputs.version }}
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+        files: release/*.deb
+        body: |
+          # Frankly Firmware Update Tools v${{ steps.get_version.outputs.version }}
+
+          ## Installation
+
+          ### Ubuntu/Debian
+
+          Download the appropriate `.deb` package for your Ubuntu version and install:
+
+          ```bash
+          # For CLI tool
+          sudo dpkg -i frankly-fw-update-cli_${{ steps.get_version.outputs.version }}-1_amd64.deb
+
+          # For TUI tool
+          sudo dpkg -i frankly-fw-update-tui_${{ steps.get_version.outputs.version }}-1_amd64.deb
+
+          # Install dependencies if needed
+          sudo apt-get install -f
+          ```
+
+          ## Packages Included
+
+          - `frankly-fw-update-cli` - Command-line interface
+          - `frankly-fw-update-tui` - Terminal user interface
+
+          ## Supported Platforms
+
+          - Ubuntu 22.04 LTS (Jammy)
+          - Ubuntu 24.04 LTS (Noble)
+          - Debian-based distributions

@@ -1,0 +1,40 @@
+Source: frankly-fw-update
+Section: utils
+Priority: optional
+Maintainer: Francor <info@francor.de>
+Build-Depends: debhelper-compat (= 13),
+               libudev-dev,
+               pkg-config
+Standards-Version: 4.6.2
+Homepage: https://github.com/franc0r/frankly-fw-update-cli
+Rules-Requires-Root: no
+
+Package: frankly-fw-update-cli
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: CLI tool for updating firmware on Frankly Bootloader devices
+ This package provides a command-line interface for updating firmware
+ on embedded devices using the Frankly Bootloader protocol. It supports
+ multiple communication interfaces including Serial, CAN, Ethernet, and
+ simulated devices.
+ .
+ Features include:
+  - Device discovery and scanning
+  - Application erasing
+  - Firmware flashing from Intel HEX files
+  - Device reset
+  - Support for Serial, CAN, Ethernet, and SIM interfaces
+
+Package: frankly-fw-update-tui
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Terminal UI for updating firmware on Frankly Bootloader devices
+ This package provides an interactive terminal user interface for updating
+ firmware on embedded devices using the Frankly Bootloader protocol.
+ .
+ The TUI provides a menu-driven experience with features including:
+  - Interactive device discovery
+  - Guided operation selection (Search, Erase, Flash, Reset)
+  - File browser for selecting firmware files
+  - Live progress display during operations
+  - Support for Serial, CAN, Ethernet, and SIM interfaces

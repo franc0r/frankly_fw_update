@@ -21,6 +21,7 @@ jobs:
     strategy:
       matrix:
         ubuntu_version: ['22.04', '24.04']
+        arch: ['amd64', 'arm64']
 
     steps:
     - name: Install system dependencies
@@ -31,13 +32,21 @@ jobs:
           debhelper \
           devscripts \
           libudev-dev \
-          pkg-config
+          pkg-config \
+          crossbuild-essential-arm64 \
+          libudev-dev:arm64
+
+    - name: Setup dpkg for cross-compilation
+      if: matrix.arch == 'arm64'
+      run: |
+        sudo dpkg --add-architecture arm64
 
     - name: Setup Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: stable
         cache: true
+        target: ${{ matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
 
     - name: Checkout frankly-bootloader dependency
       uses: actions/checkout@v4
@@ -73,10 +82,26 @@ jobs:
          -- Francor <info@francor.de>  ${DATE}
         EOF
 
+    - name: Configure cross-compilation environment
+      if: matrix.arch == 'arm64'
+      run: |
+        echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+        echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+        echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+
     - name: Build Debian packages
       working-directory: ./frankly-fw-update-cli
+      env:
+        DEB_BUILD_OPTIONS: nocheck
+        DEB_HOST_ARCH: ${{ matrix.arch }}
       run: |
-        dpkg-buildpackage -us -uc -b
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          dpkg-buildpackage -us -uc -b -a arm64 --host-arch arm64
+        else
+          dpkg-buildpackage -us -uc -b
+        fi
 
     - name: List generated packages
       run: |
@@ -86,21 +111,21 @@ jobs:
     - name: Upload CLI package
       uses: actions/upload-artifact@v4
       with:
-        name: frankly-fw-update-cli-ubuntu-${{ matrix.ubuntu_version }}
+        name: frankly-fw-update-cli-ubuntu-${{ matrix.ubuntu_version }}-${{ matrix.arch }}
         path: frankly-fw-update-cli_*.deb
         if-no-files-found: error
 
     - name: Upload TUI package
       uses: actions/upload-artifact@v4
       with:
-        name: frankly-fw-update-tui-ubuntu-${{ matrix.ubuntu_version }}
+        name: frankly-fw-update-tui-ubuntu-${{ matrix.ubuntu_version }}-${{ matrix.arch }}
         path: frankly-fw-update-tui_*.deb
         if-no-files-found: error
 
     - name: Upload all build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: build-artifacts-ubuntu-${{ matrix.ubuntu_version }}
+        name: build-artifacts-ubuntu-${{ matrix.ubuntu_version }}-${{ matrix.arch }}
         path: |
           *.deb
           *.buildinfo
@@ -149,17 +174,26 @@ jobs:
 
           ### Ubuntu/Debian
 
-          Download the appropriate `.deb` package for your Ubuntu version and install:
+          Download the appropriate `.deb` package for your Ubuntu version and architecture:
 
           ```bash
-          # For CLI tool
-          sudo dpkg -i frankly-fw-update-cli_${{ steps.get_version.outputs.version }}-1_amd64.deb
+          # For CLI tool (replace ARCH with amd64 or arm64)
+          sudo dpkg -i frankly-fw-update-cli_${{ steps.get_version.outputs.version }}-1_ARCH.deb
 
-          # For TUI tool
-          sudo dpkg -i frankly-fw-update-tui_${{ steps.get_version.outputs.version }}-1_amd64.deb
+          # For TUI tool (replace ARCH with amd64 or arm64)
+          sudo dpkg -i frankly-fw-update-tui_${{ steps.get_version.outputs.version }}-1_ARCH.deb
 
           # Install dependencies if needed
           sudo apt-get install -f
+          ```
+
+          **Examples:**
+          ```bash
+          # For x86_64/Intel/AMD systems:
+          sudo dpkg -i frankly-fw-update-cli_${{ steps.get_version.outputs.version }}-1_amd64.deb
+
+          # For ARM64/aarch64 systems (e.g., Raspberry Pi 4/5, ARM servers):
+          sudo dpkg -i frankly-fw-update-cli_${{ steps.get_version.outputs.version }}-1_arm64.deb
           ```
 
           ## Packages Included
@@ -169,6 +203,11 @@ jobs:
 
           ## Supported Platforms
 
-          - Ubuntu 22.04 LTS (Jammy)
-          - Ubuntu 24.04 LTS (Noble)
-          - Debian-based distributions
+          - Ubuntu 22.04 LTS (Jammy) - amd64, arm64
+          - Ubuntu 24.04 LTS (Noble) - amd64, arm64
+          - Debian-based distributions - amd64, arm64
+
+          ## Architectures
+
+          - **amd64** (x86_64): Intel and AMD 64-bit processors
+          - **arm64** (aarch64): 64-bit ARM processors (Raspberry Pi 4/5, AWS Graviton, etc.)

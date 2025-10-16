@@ -65,3 +65,11 @@ override_dh_auto_install:
 override_dh_dwz:
 	# Skip dwz compression for Rust binaries (can cause issues)
 	true
+
+override_dh_shlibdeps:
+	# When cross-compiling for arm64, tell dpkg-shlibdeps where to find arm64 libraries
+ifeq ($(DEB_HOST_ARCH),arm64)
+	dh_shlibdeps -l/usr/aarch64-linux-gnu/lib
+else
+	dh_shlibdeps
+endif

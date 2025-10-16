@@ -80,7 +80,9 @@ jobs:
             devscripts \
             pkg-config \
             crossbuild-essential-arm64 \
-            libudev-dev:arm64
+            libudev-dev:arm64 \
+            libstdc++6:arm64 \
+            libgcc-s1:arm64
         else
           sudo apt-get install -y \
             build-essential \

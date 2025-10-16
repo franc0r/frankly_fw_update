@@ -25,6 +25,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use std::time::Duration;
 
 const SIM_NODE_LST: [u8; 4] = [1, 3, 31, 8];
 
@@ -182,11 +183,24 @@ impl App {
                 self.available_interfaces.push("sim".to_string());
             }
             InterfaceType::Serial => {
-                // Enumerate serial ports
+                // Enumerate serial ports and filter to only accessible ones
                 match serialport::available_ports() {
                     Ok(ports) => {
                         for port in ports {
-                            self.available_interfaces.push(port.port_name);
+                            // Try to open the port to verify it's accessible and active
+                            // Use a very short timeout to avoid hanging
+                            match serialport::new(&port.port_name, 115200)
+                                .timeout(Duration::from_millis(100))
+                                .open()
+                            {
+                                Ok(_) => {
+                                    // Port is accessible and active, add it to the list
+                                    self.available_interfaces.push(port.port_name);
+                                }
+                                Err(_) => {
+                                    // Port is not accessible or inactive, skip it
+                                }
+                            }
                         }
                     }
                     Err(_) => {
@@ -195,7 +209,7 @@ impl App {
                 }
 
                 if self.available_interfaces.is_empty() {
-                    self.error_message = Some("No serial ports found".to_string());
+                    self.error_message = Some("No accessible serial ports found".to_string());
                 }
             }
             InterfaceType::CAN => {
@@ -1039,6 +1053,10 @@ fn handle_interface_selection(app: &mut App, key: KeyCode) {
                 }
             }
         }
+        KeyCode::F(5) => {
+            // Refresh interface list (rescan for new serial devices, etc.)
+            app.discover_interfaces();
+        }
         KeyCode::Esc => {
             app.current_screen = Screen::InterfaceTypeSelection;
         }
@@ -1482,7 +1500,7 @@ fn draw_interface_selection(f: &mut Frame, app: &App, area: Rect) {
     f.render_stateful_widget(list, chunks[1], &mut state);
 
     let help = Paragraph::new(
-        "Use ↑↓ to navigate, Enter to select and search, Esc to go back, 'q' to quit",
+        "↑↓ to navigate | Enter to select | F5 to refresh | Esc to go back | 'q' to quit",
     )
     .style(Style::default().fg(Color::Gray))
     .alignment(Alignment::Center)

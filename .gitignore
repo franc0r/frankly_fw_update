@@ -1,1 +1,20 @@
 /target
+
+# Debian package build artifacts
+/debian/.debhelper
+/debian/frankly-fw-update-cli
+/debian/frankly-fw-update-tui
+/debian/files
+/debian/*.substvars
+/debian/*.debhelper
+/debian/*.log
+/debian/cargo
+/debian/tmp
+
+# Generated .deb packages and build files
+*.deb
+*.dsc
+*.tar.xz
+*.tar.gz
+*.buildinfo
+*.changes

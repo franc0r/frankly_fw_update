@@ -1,0 +1,46 @@
+#!/usr/bin/make -f
+
+# Debian build rules for frankly-fw-update packages
+
+export DH_VERBOSE = 1
+export CARGO_HOME = $(CURDIR)/debian/cargo
+
+# Add rustup/cargo to PATH if installed via rustup
+export PATH := $(HOME)/.cargo/bin:$(PATH)
+
+# Use all available CPU cores for building
+export CARGO_BUILD_JOBS = $(shell nproc)
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	cargo clean || true
+	rm -rf $(CARGO_HOME)
+
+override_dh_auto_configure:
+	# Clone frankly-bootloader dependency if not present
+	if [ ! -d ../frankly-bootloader ]; then \
+		git clone --depth 1 --branch devel https://github.com/franc0r/frankly-bootloader.git ../frankly-bootloader; \
+	fi
+
+override_dh_auto_build:
+	# Build the entire workspace in release mode
+	cargo build --release --workspace
+
+override_dh_auto_test:
+	# Run tests
+	cargo test --workspace || true
+
+override_dh_auto_install:
+	# Install CLI binary
+	install -D -m 755 target/release/frankly-fw-update-cli \
+		debian/frankly-fw-update-cli/usr/bin/frankly-fw-update-cli
+
+	# Install TUI binary
+	install -D -m 755 target/release/frankly-fw-update-tui \
+		debian/frankly-fw-update-tui/usr/bin/frankly-fw-update-tui
+
+override_dh_dwz:
+	# Skip dwz compression for Rust binaries (can cause issues)
+	true

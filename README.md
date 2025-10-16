@@ -27,7 +27,38 @@ A comprehensive Rust-based toolset for updating firmware on embedded devices usi
 
 ## Installation
 
-### Prerequisites
+### From APT Package (Ubuntu/Debian)
+
+The easiest way to install on Ubuntu or Debian systems is using the pre-built `.deb` packages:
+
+```bash
+# Download the .deb packages from the latest release
+# https://github.com/franc0r/frankly-fw-update-cli/releases
+
+# Install CLI tool
+sudo dpkg -i frankly-fw-update-cli_*_amd64.deb
+
+# Install TUI tool
+sudo dpkg -i frankly-fw-update-tui_*_amd64.deb
+
+# If you encounter dependency issues, run:
+sudo apt-get install -f
+```
+
+**Supported Versions**:
+- Ubuntu 22.04 LTS (Jammy)
+- Ubuntu 24.04 LTS (Noble)
+- Debian-based distributions
+
+After installation, the tools are available system-wide:
+```bash
+frankly-fw-update-cli --help
+frankly-fw-update-tui
+```
+
+### From Source
+
+#### Prerequisites
 
 **Linux (Ubuntu/Debian)**:
 ```bash
@@ -41,7 +72,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup update stable
 ```
 
-### Clone and Build
+#### Clone and Build
 
 ```bash
 # Clone the frankly-bootloader dependency (sibling directory)
@@ -485,7 +516,9 @@ frankly-fw-update-cli/
 ├── cli/                    # Command-line interface
 ├── tui/                    # Terminal user interface
 ├── common/                 # Core bootloader protocol library
+├── debian/                 # Debian packaging files
 ├── Cargo.toml              # Workspace configuration
+├── build-deb.sh            # Local package build script
 └── README.md               # This file
 ```
 
@@ -507,6 +540,77 @@ cargo test --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+### Building Debian/Ubuntu Packages Locally
+
+You can build `.deb` packages locally for testing or distribution:
+
+#### Prerequisites
+
+```bash
+# Install Debian packaging tools
+sudo apt-get install build-essential debhelper devscripts
+
+# Install Rust and dependencies (if not already installed)
+sudo apt-get install cargo rustc libudev-dev pkg-config
+```
+
+#### Build Packages
+
+```bash
+# Run the build script
+./build-deb.sh
+```
+
+The script will:
+1. Check for required build dependencies
+2. Clone the `frankly-bootloader` dependency if needed
+3. Build the Debian packages
+4. Place the `.deb` files in the parent directory
+
+#### Install Locally Built Packages
+
+```bash
+# Install both packages
+sudo dpkg -i ../frankly-fw-update-*.deb
+
+# Or install individually
+sudo dpkg -i ../frankly-fw-update-cli_*.deb
+sudo dpkg -i ../frankly-fw-update-tui_*.deb
+
+# Fix any dependency issues
+sudo apt-get install -f
+```
+
+#### Manual Package Build
+
+If you prefer to build manually without the script:
+
+```bash
+# Build packages using dpkg-buildpackage
+dpkg-buildpackage -us -uc -b
+
+# Packages will be created in parent directory
+ls ../*.deb
+```
+
+### Release Pipeline
+
+The project includes a GitHub Actions workflow (`.github/workflows/release.yml`) that automatically builds packages for multiple Ubuntu versions when a new tag is pushed:
+
+```bash
+# Create and push a release tag
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+This will:
+1. Build packages for Ubuntu 22.04 and 24.04
+2. Create a GitHub release
+3. Upload `.deb` packages as release assets
+4. Generate release notes
+
+You can also trigger the release workflow manually from GitHub Actions with a custom version number.
 
 ### Dependencies
 
